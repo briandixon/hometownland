@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hometown Land — Sell Your Vacant Land</title>
+<meta name="description" content="Tell us about your vacant land and receive a written cash offer, reviewed at our expense, with no obligation to accept.">
+<link rel="canonical" href="https://www.gohometownland.com/">
+<meta property="og:title" content="Hometown Land — Sell Your Vacant Land">
+<meta property="og:description" content="Tell us about your vacant land and receive a written cash offer, reviewed at our expense, with no obligation to accept.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.gohometownland.com/">
+<meta property="og:image" content="https://www.gohometownland.com/assets/img/logo.png">
+<meta name="theme-color" content="#22394A">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/assets/img/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header><div class="wrap">
+  <a class="brand" href="/">
+    <img src="/assets/img/logo-trim.png" alt="Hometown Land" width="282" height="246">
+    <span>
+      <span class="wm">Hometown Land</span>
+      <span class="tag">Direct Buyers of Vacant Land</span>
+    </span>
+  </a>
+  <nav aria-label="Main">
+    <a href="/" class="on">Home</a>
+    <a href="/how-it-works">How It Works</a>
+    <a href="/about">About</a>
+    <a href="/faq">FAQ</a>
+    <a href="/contact">Contact</a>
+    <a class="btn" href="/#offer">Request an Offer</a>
+  </nav>
+</div></header>
+<main id="main">
+<div class="lede"><div class="wrap lede-in">
+  <div>
+    <div class="rule"></div>
+    <h1>Selling land should not be complicated.</h1>
+    <p>Tell us about your property and we will review it at our own expense. If it is a fit, you will receive a written cash offer &mdash; with no obligation to accept it.</p>
+    <p class="foot">We purchase directly and close through a licensed title company, which keeps the timeline short and the process predictable.</p>
+  </div>
+  <div class="card" id="offer">
+  <div class="card-hd">
+    <h2>Request an Offer</h2>
+    <small>Free, confidential, about two minutes</small>
+    <div class="pbar" aria-hidden="true">
+      <div class="on" data-p="1">1. Property</div>
+      <div data-p="2">2. Details</div>
+      <div data-p="3">3. Contact</div>
+    </div>
+  </div>
+
+  <form class="card-bd" id="offerForm" method="post" action="/api/lead" novalidate>
+    <p class="formerr" id="formErr" role="alert"></p>
+
+    <!-- bots fill this; people never see it -->
+    <div class="hp" aria-hidden="true">
+      <label>Do not fill this in <input type="text" name="company" tabindex="-1" autocomplete="off"></label>
+    </div>
+
+    <fieldset class="step on" data-s="1">
+      <legend class="skip">Where is the property?</legend>
+      <div class="fld">
+        <label for="state">State <span class="req">*</span></label>
+        <select id="state" name="state" required>
+            <option value="">Select a state&hellip;</option>
+            <option>Alabama</option>
+            <option>Alaska</option>
+            <option>Arizona</option>
+            <option>Arkansas</option>
+            <option>California</option>
+            <option>Colorado</option>
+            <option>Connecticut</option>
+            <option>Delaware</option>
+            <option>Florida</option>
+            <option>Georgia</option>
+            <option>Hawaii</option>
+            <option>Idaho</option>
+            <option>Illinois</option>
+            <option>Indiana</option>
+            <option>Iowa</option>
+            <option>Kansas</option>
+            <option>Kentucky</option>
+            <option>Louisiana</option>
+            <option>Maine</option>
+            <option>Maryland</option>
+            <option>Massachusetts</option>
+            <option>Michigan</option>
+            <option>Minnesota</option>
+            <option>Mississippi</option>
+            <option>Missouri</option>
+            <option>Montana</option>
+            <option>Nebraska</option>
+            <option>Nevada</option>
+            <option>New Hampshire</option>
+            <option>New Jersey</option>
+            <option>New Mexico</option>
+            <option>New York</option>
+            <option>North Carolina</option>
+            <option>North Dakota</option>
+            <option>Ohio</option>
+            <option>Oklahoma</option>
+            <option>Oregon</option>
+            <option>Pennsylvania</option>
+            <option>Rhode Island</option>
+            <option>South Carolina</option>
+            <option>South Dakota</option>
+            <option>Tennessee</option>
+            <option>Texas</option>
+            <option>Utah</option>
+            <option>Vermont</option>
+            <option>Virginia</option>
+            <option>Washington</option>
+            <option>West Virginia</option>
+            <option>Wisconsin</option>
+            <option>Wyoming</option>
+        </select>
+        <span class="msg" data-for="state">Please choose the state the land is in.</span>
+      </div>
+      <div class="fld">
+        <label for="county">County <span class="req">*</span></label>
+        <input id="county" name="county" required placeholder="e.g. Union County">
+        <span class="msg" data-for="county">Please enter the county.</span>
+      </div>
+      <div class="row2">
+        <div class="fld">
+          <label for="parcel">Parcel or APN</label>
+          <input id="parcel" name="parcel" placeholder="Optional">
+        </div>
+        <div class="fld">
+          <label for="acres">Approx. acres</label>
+          <input id="acres" name="acres" inputmode="decimal" placeholder="e.g. 5.2">
+        </div>
+      </div>
+      <button type="button" class="btn" data-next="2">Continue</button>
+    </fieldset>
+
+    <fieldset class="step" data-s="2">
+      <legend class="skip">About the property</legend>
+      <div class="fld">
+        <label for="ownership">Your ownership</label>
+        <select id="ownership" name="ownership">
+          <option>I am on the deed</option>
+          <option>I inherited it</option>
+          <option>It is in probate</option>
+          <option>I own a partial interest</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label for="access">Road access</label>
+        <select id="access" name="access">
+          <option>Paved road</option>
+          <option>Dirt or gravel road</option>
+          <option>No legal access</option>
+          <option>Not sure</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label for="timeline">How soon would you sell?</label>
+        <select id="timeline" name="timeline">
+          <option>As soon as possible</option>
+          <option>Within one to three months</option>
+          <option>Within three to six months</option>
+          <option>Only if the number is right</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label for="notes">Anything else we should know?</label>
+        <textarea id="notes" name="notes" rows="3" placeholder="Heirs, liens, surveys, easements, structures&hellip;"></textarea>
+      </div>
+      <button type="button" class="btn" data-next="3">Continue</button>
+      <button type="button" class="backlink" data-next="1">Back</button>
+    </fieldset>
+
+    <fieldset class="step" data-s="3">
+      <legend class="skip">How to reach you</legend>
+      <div class="fld">
+        <label for="name">Full name <span class="req">*</span></label>
+        <input id="name" name="name" required autocomplete="name" placeholder="First and last">
+        <span class="msg" data-for="name">Please enter your name.</span>
+      </div>
+      <div class="fld">
+        <label for="email">Email <span class="req">*</span></label>
+        <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com">
+        <span class="msg" data-for="email">Please enter an email address we can reply to.</span>
+      </div>
+      <div class="row2">
+        <div class="fld">
+          <label for="phone">Phone</label>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="Optional">
+        </div>
+        <div class="fld">
+          <label for="besttime">Best time to reach you</label>
+          <select id="besttime" name="besttime">
+            <option>Morning</option>
+            <option>Afternoon</option>
+            <option>Evening</option>
+          </select>
+        </div>
+      </div>
+      <div class="fld consent">
+        <label class="chk">
+          <input type="checkbox" id="smsConsent" name="smsConsent" value="yes">
+          <span>I agree to receive text messages from Hometown Land about my property and offer at the phone number provided. Consent is not a condition of purchase. Message frequency varies. Message and data rates may apply. Reply STOP to opt out, HELP for help. See our <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/terms#sms" target="_blank" rel="noopener">SMS Terms</a>.</span>
+        </label>
+        <span class="msg" data-for="smsConsent">Add a phone number above to receive texts, or leave this unchecked.</span>
+      </div>
+      <button type="submit" class="btn" id="submitBtn">Submit My Property</button>
+      <button type="button" class="backlink" data-next="2">Back</button>
+    </fieldset>
+  </form>
+
+  <div class="card-ft">Your information stays private. Requesting an offer places you under no obligation.</div>
+</div>
+</div></div>
+
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kick">The Process</div>
+      <h2>Three steps, start to finish</h2>
+    </div>
+    <div class="steps">
+      <div class="stp"><div class="n">Step One</div><h3>You send the details</h3>
+        <p>The state, county, and a parcel number or address is enough to begin.</p></div>
+      <div class="stp"><div class="n">Step Two</div><h3>We review the property</h3>
+        <p>Comparable sales, legal access, zoning, and title condition &mdash; all at our expense.</p></div>
+      <div class="stp"><div class="n">Step Three</div><h3>You receive an offer</h3>
+        <p>A specific number in writing. Accept, counter, or decline as you see fit.</p></div>
+    </div>
+    <p style="text-align:center;margin:38px 0 0"><a class="btn" href="/how-it-works">See the full process</a></p>
+  </div>
+</section>
+
+<div class="strip" style="background-image:url(/assets/img/field-treeline-hero.jpg)" role="img" aria-label="Open pasture and treeline at dusk"></div>
+
+<section class="off">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kick">About</div>
+      <h2>You will be dealing with a person</h2>
+      <p>Hometown Land is a small, owner-operated land buying company. When you submit a property, <span class="ph">Brian Dixon</span> reviews it personally.</p>
+    </div>
+    <div class="pts">
+      <div class="pt"><div class="bar"></div><h3>We buy directly</h3>
+        <p>We purchase with our own funds, so there is no lender and no financing contingency waiting to unravel the sale.</p></div>
+      <div class="pt"><div class="bar"></div><h3>We do the research</h3>
+        <p>You do not need to gather documents, order anything, or pay for a thing in order to receive an offer.</p></div>
+      <div class="pt"><div class="bar"></div><h3>We close quickly</h3>
+        <p>A licensed title company handles the closing, and the process is measured in weeks rather than seasons.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap narrow">
+    <div class="sec-head">
+      <div class="kick">Questions</div>
+      <h2>What landowners ask</h2>
+    </div>
+    <div class="faq">
+      <details open><summary>What does this cost me?</summary><p>Nothing. We pay for the research and the title work, and there is no fee for receiving an offer.</p></details>
+      <details><summary>Am I obligated once I submit the form?</summary><p>No. Submitting the form starts a conversation and nothing more. You are free to accept our offer, counter it, or walk away.</p></details>
+      <details><summary>How do you arrive at your number?</summary><p>We look at recent comparable sales in the same county and acreage range, then adjust for legal access, zoning and permitted use, topography, and the condition of the title. We are happy to walk you through the reasoning.</p></details>
+      <details><summary>What if I do not know the parcel number?</summary><p>Send whatever you have &mdash; an address, a nearby cross street, or a description. We can usually locate the parcel in the county records ourselves.</p></details>
+    </div>
+    <p style="text-align:center;margin:40px 0 0"><a class="btn" href="/faq">Read all questions</a></p>
+  </div>
+</section>
+
+<section class="off">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kick">From Sellers</div>
+      <h2>In their words</h2>
+    </div>
+    <div class="tst-row">
+      <div class="tst"><span class="stubtag">Replace before launch</span>
+        <p class="ph">Placeholder for a real seller quote. Two or three sentences reads best here.</p>
+        <cite class="ph">Seller name, County</cite></div>
+      <div class="tst"><span class="stubtag">Replace before launch</span>
+        <p class="ph">Placeholder for a real seller quote. Two or three sentences reads best here.</p>
+        <cite class="ph">Seller name, County</cite></div>
+      <div class="tst"><span class="stubtag">Replace before launch</span>
+        <p class="ph">Placeholder for a real seller quote. Two or three sentences reads best here.</p>
+        <cite class="ph">Seller name, County</cite></div>
+    </div>
+  </div>
+</section>
+
+<div class="cta">
+  <div class="wrap">
+    <h2>Find out what your land is worth to us</h2>
+    <p>It costs nothing and takes about two minutes. If we are not the right buyer, we will tell you that plainly.</p>
+    <a class="btn btn-light" href="#offer">Request an Offer</a>
+  </div>
+</div>
+</main>
+<footer><div class="wrap">
+  <img src="/assets/img/logo-trim.png" alt="" width="282" height="246">
+  <div class="fwm">Hometown Land</div>
+  <div class="fnav">
+    <a href="/">Home</a><a href="/how-it-works">How It Works</a><a href="/about">About</a>
+    <a href="/faq">FAQ</a><a href="/#offer">Request an Offer</a><a href="/contact">Contact</a>
+  </div>
+  <div>
+    <a href="mailto:offers@gohometownland.com"><span class="ph">offers@gohometownland.com</span></a>
+    &nbsp;&middot;&nbsp;
+    <span class="ph">PO Box 000, City, ST 00000</span>
+  </div>
+  <div class="legal">
+    &copy; 2026 Hometown Land &nbsp;&middot;&nbsp;
+    <a href="/privacy">Privacy Policy</a> &nbsp;&middot;&nbsp;
+    <a href="/terms">Terms of Use</a> &nbsp;&middot;&nbsp;
+    <a href="/terms#sms">SMS Terms</a> &nbsp;&middot;&nbsp;
+    We purchase land directly and are not licensed real estate agents or brokers.
+  </div>
+</div></footer>
+<script src="/assets/js/site.js" defer></script>
+</body>
+</html>

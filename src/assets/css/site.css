@@ -1,0 +1,237 @@
+/* ==========================================================================
+   Hometown Land — gohometownland.com
+   Navy sampled from the logo (#22394A); bronze (#A67B50) lives in the mark only.
+   Green is the accent: buttons, rules, links, active states.
+   ========================================================================== */
+
+:root{
+  --navy-900:#16242F; --navy-800:#1D2F3D; --navy-700:#22394A; --navy-600:#2E4A5E; --navy-300:#8CA1B0;
+  --g-700:#1E5133; --g-600:#2A6B44; --g-300:#7FAE93;
+  --white:#FFFFFF; --off:#F4F7F9; --rule:#DCE3E8; --rule-lt:#EBF0F4;
+  --ink:#16242F; --body:#495660; --muted:#77848D;
+  --err:#9B2C2C; --ok:#1E5133;
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;background:var(--white);color:var(--body);
+  font:17px/1.7 "Libre Franklin",-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+h1,h2,h3{font-family:Newsreader,Georgia,"Times New Roman",serif;color:var(--ink);
+  margin:0 0 .5em;line-height:1.2;font-weight:500;text-wrap:balance}
+h1{font-size:48px;letter-spacing:-.8px}
+h2{font-size:31px;letter-spacing:-.4px}
+h3{font-size:19px;font-weight:600}
+p{margin:0 0 1.05em}
+a{color:var(--g-700)}
+img{max-width:100%;display:block}
+:focus-visible{outline:2px solid var(--g-600);outline-offset:2px}
+
+.wrap{max-width:1080px;margin:0 auto;padding:0 26px}
+.narrow{max-width:720px;margin:0 auto}
+.skip{position:absolute;left:-9999px}
+.skip:focus{left:26px;top:10px;z-index:99;background:var(--white);padding:10px 16px;
+  border:2px solid var(--g-600);border-radius:2px;width:auto}
+
+/* ---------- buttons ---------- */
+.btn{display:inline-block;background:var(--g-700);color:#fff !important;text-decoration:none;
+  font:600 14.5px/1 "Libre Franklin",Arial,sans-serif;
+  padding:15px 30px;border:1px solid var(--g-700);border-radius:2px;cursor:pointer}
+.btn:hover{background:var(--g-600);border-color:var(--g-600)}
+.btn:disabled{opacity:.6;cursor:default}
+.btn-light{background:var(--white);color:var(--navy-800) !important;border-color:var(--white)}
+.btn-light:hover{background:var(--off);border-color:var(--off)}
+
+/* ---------- header ---------- */
+header{background:var(--white);border-bottom:1px solid var(--rule)}
+header .wrap{display:flex;align-items:center;justify-content:space-between;gap:24px;
+  padding-top:16px;padding-bottom:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:15px;text-decoration:none}
+.brand img{width:60px;height:auto;flex:none}
+.brand .wm{font-family:Newsreader,Georgia,serif;font-size:25px;font-weight:500;
+  color:var(--navy-700);line-height:1.05;letter-spacing:.01em;display:block}
+.brand .tag{font-size:9.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--g-600);
+  font-weight:600;margin-top:5px;display:block}
+nav{display:flex;align-items:center;gap:26px;flex-wrap:wrap}
+nav a{color:var(--body);text-decoration:none;font-size:14.5px;font-weight:500;
+  padding-bottom:3px;border-bottom:1px solid transparent}
+nav a:hover,nav a.on{color:var(--navy-700);border-bottom-color:var(--g-600)}
+nav .btn{color:#fff !important;border-bottom-color:var(--g-700)}
+nav .btn:hover{border-bottom-color:var(--g-600)}
+
+/* ---------- lede (home) ---------- */
+.lede{padding:64px 0 60px;border-bottom:1px solid var(--rule)}
+.lede-in{display:grid;grid-template-columns:1fr 420px;gap:64px;align-items:start}
+.lede h1{margin-bottom:20px}
+.lede p{font-size:19px;max-width:30em}
+.lede .rule{width:56px;height:3px;background:var(--g-600);margin:0 0 26px}
+.lede .foot{margin-top:26px;padding-top:22px;border-top:1px solid var(--rule);
+  font-size:15.5px;color:var(--muted);max-width:30em}
+
+/* ---------- interior page banner ---------- */
+.pagehead{background:var(--off);border-bottom:1px solid var(--rule);padding:52px 0}
+.pagehead .rule{width:48px;height:3px;background:var(--g-600);margin:0 0 22px}
+.pagehead h1{font-size:42px;margin-bottom:12px}
+.pagehead p{font-size:18.5px;max-width:36em;margin:0}
+
+/* ---------- offer form ---------- */
+.card{border:1px solid var(--rule);border-top:3px solid var(--g-700);border-radius:2px;background:var(--white)}
+.card-hd{padding:22px 26px 0}
+.card-hd h2,.card-hd h3{margin:0 0 3px;font-size:20px;font-family:Newsreader,Georgia,serif;
+  font-weight:500;color:var(--navy-700);letter-spacing:0}
+.card-hd small{font-size:14px;color:var(--muted)}
+.pbar{display:flex;margin-top:18px;border-bottom:1px solid var(--rule)}
+.pbar div{flex:1;padding:0 0 11px;font-size:12.5px;font-weight:600;color:var(--muted);
+  border-bottom:2px solid transparent;margin-bottom:-1px}
+.pbar div.on{color:var(--g-700);border-bottom-color:var(--g-600)}
+.card-bd{padding:22px 26px 26px}
+.card-ft{font-size:13px;color:var(--muted);padding:0 26px 22px;line-height:1.5}
+
+/* each step is a fieldset for grouping; the default browser box must go */
+fieldset{border:0;margin:0;padding:0;min-width:0}
+legend{padding:0}
+
+.fld{margin-bottom:15px}
+.fld label{display:block;font-size:13px;font-weight:600;color:var(--body);margin-bottom:6px}
+.fld .req{color:var(--g-600)}
+.fld input,.fld select,.fld textarea{width:100%;font:16px/1.5 "Libre Franklin",Arial,sans-serif;
+  color:var(--ink);padding:11px 12px;background:var(--white);border:1px solid #C3CDD4;border-radius:2px}
+.fld textarea{resize:vertical;min-height:82px}
+.fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--g-600);
+  box-shadow:0 0 0 3px rgba(42,107,68,.13)}
+.fld input[aria-invalid="true"],.fld select[aria-invalid="true"]{border-color:var(--err);
+  box-shadow:0 0 0 3px rgba(155,44,44,.10)}
+.fld .msg{display:none;font-size:13px;color:var(--err);margin-top:5px}
+.fld .msg.on{display:block}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+/* SMS consent checkbox */
+.consent{margin-top:2px}
+.consent .chk{display:flex;gap:10px;align-items:flex-start;margin:0;
+  font-size:12.5px;line-height:1.5;font-weight:400;color:var(--muted);cursor:pointer}
+.consent .chk input{flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;padding:0;accent-color:var(--g-700)}
+.consent .chk a{color:var(--g-700)}
+.consent .msg{margin-top:7px}
+
+.step{display:none}
+.step.on{display:block}
+.card .btn{width:100%;text-align:center;margin-top:4px}
+.backlink{background:none;border:0;color:var(--g-700);font:600 14px "Libre Franklin",Arial;
+  cursor:pointer;padding:12px 0 0;display:block;margin:0 auto;text-decoration:underline}
+.formerr{display:none;background:#FDF3F3;border:1px solid #E5C4C4;color:var(--err);
+  padding:12px 14px;border-radius:2px;font-size:14.5px;margin-bottom:16px}
+.formerr.on{display:block}
+
+/* ---------- sections ---------- */
+section{padding:72px 0}
+.off{background:var(--off);border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.kick{font-size:11.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--g-600);
+  font-weight:700;margin-bottom:13px}
+.sec-head{text-align:center;max-width:620px;margin:0 auto 50px}
+.sec-head p{font-size:18px;margin-bottom:0}
+
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--rule)}
+.stp{padding:30px 30px 6px;border-right:1px solid var(--rule)}
+.stp:last-child{border-right:0}
+.stp .n{font-size:12px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--g-600);margin-bottom:12px}
+.stp h3{margin-bottom:8px}
+.stp p{font-size:16px}
+
+.strip{height:230px;background:var(--navy-900) center/cover no-repeat}
+
+.pts{display:grid;grid-template-columns:repeat(3,1fr);gap:40px}
+.pt h3{margin-bottom:8px}
+.pt p{font-size:16px;margin:0}
+.pt .bar{width:34px;height:2px;background:var(--g-600);margin-bottom:16px}
+
+.prose{max-width:680px}
+.prose h2{margin-top:44px}
+.prose h2:first-child{margin-top:0}
+.prose ul{padding-left:22px;margin:0 0 1.2em}
+.prose li{margin-bottom:9px}
+
+/* ---------- detailed process list ---------- */
+.plist{list-style:none;margin:0;padding:0;counter-reset:pl}
+.plist li{counter-increment:pl;padding:28px 0 28px 76px;border-top:1px solid var(--rule);position:relative}
+.plist li:last-child{border-bottom:1px solid var(--rule)}
+.plist li:before{content:counter(pl);position:absolute;left:0;top:26px;
+  width:46px;height:46px;border:1.5px solid var(--g-600);border-radius:50%;
+  font-family:Newsreader,Georgia,serif;font-size:19px;color:var(--g-700);
+  display:flex;align-items:center;justify-content:center}
+.plist h3{margin-bottom:7px}
+.plist p{margin:0;font-size:16.5px}
+
+/* ---------- faq ---------- */
+.faq details{border-bottom:1px solid var(--rule)}
+.faq summary{list-style:none;cursor:pointer;padding:20px 40px 20px 0;position:relative;
+  font-family:Newsreader,Georgia,serif;font-size:19px;font-weight:500;color:var(--ink)}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary:after{content:"+";position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  font-family:"Libre Franklin",Arial;font-size:21px;color:var(--g-600);line-height:1}
+.faq details[open] summary:after{content:"\2013"}
+.faq details p{margin:0 0 22px;font-size:16.5px;padding-right:40px}
+
+/* ---------- testimonial stubs ---------- */
+.tst-row{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.tst{border:1px dashed #B9C7D0;border-radius:2px;padding:24px;position:relative;background:var(--white)}
+.tst p{font-family:Newsreader,Georgia,serif;font-style:italic;font-size:16.5px;color:var(--muted)}
+.tst cite{display:block;font-style:normal;font-size:14px;font-weight:600;color:var(--navy-700);margin-top:12px}
+.stubtag{position:absolute;top:-10px;left:16px;background:var(--g-600);color:#fff;
+  font:700 9.5px/1 "Libre Franklin",Arial;letter-spacing:.14em;padding:4px 9px;
+  border-radius:2px;text-transform:uppercase}
+.ph{background:rgba(34,57,74,.09);border-bottom:1px dashed var(--navy-300);padding:0 3px}
+
+/* ---------- cta ---------- */
+.cta{background:var(--navy-800);color:#BFCEDA;text-align:center;padding:64px 0}
+.cta h2{color:#fff}
+.cta p{font-size:18px;max-width:540px;margin:0 auto 26px}
+
+/* ---------- footer ---------- */
+footer{background:var(--white);border-top:1px solid var(--rule);color:var(--muted);
+  font-size:15px;padding:44px 0;text-align:center}
+footer img{width:66px;height:auto;margin:0 auto 14px}
+.fwm{font-family:Newsreader,Georgia,serif;font-size:21px;font-weight:500;color:var(--navy-700);margin-bottom:4px}
+.fnav{margin:18px 0}
+.fnav a{color:var(--body);text-decoration:none;margin:0 13px;font-size:14.5px}
+.fnav a:hover{color:var(--navy-700)}
+.legal{border-top:1px solid var(--rule-lt);padding-top:20px;margin-top:20px;font-size:13.5px}
+
+/* ---------- thank you ---------- */
+.done{text-align:center;padding:90px 0}
+.done .mark{width:64px;height:64px;margin:0 auto 26px;border-radius:50%;
+  border:2px solid var(--g-600);display:flex;align-items:center;justify-content:center}
+.done p{font-size:18.5px;max-width:34em;margin:0 auto 1.05em}
+
+/* ---------- responsive ---------- */
+@media(max-width:900px){
+  .lede-in{grid-template-columns:1fr;gap:40px}
+  .steps{grid-template-columns:1fr}
+  .stp{border-right:0;border-bottom:1px solid var(--rule);padding:26px 0 20px}
+  .stp:last-child{border-bottom:0}
+  .pts{grid-template-columns:1fr;gap:30px}
+  .tst-row{grid-template-columns:1fr}
+  h1{font-size:34px}
+  h2{font-size:26px}
+  .pagehead h1{font-size:32px}
+  nav{gap:14px}
+  nav a{font-size:13.5px}
+  .brand img{width:50px}
+  .brand .wm{font-size:21px}
+}
+@media(max-width:560px){
+  .row2{grid-template-columns:1fr}
+  header .wrap{gap:14px}
+  .card-bd,.card-hd{padding-left:18px;padding-right:18px}
+  .card-ft{padding-left:18px;padding-right:18px}
+  .pbar div{font-size:11px}
+  .plist li{padding-left:0;padding-top:56px}
+  .plist li:before{top:14px}
+}
+@media(prefers-reduced-motion:reduce){
+  *{scroll-behavior:auto !important;transition:none !important;animation:none !important}
+}

@@ -1,0 +1,22 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+
+# --- Vercel CLI local link ---
+.vercel
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+
+# --- Node ---
+node_modules/
+
+# --- Local design mockups (not deployed) ---
+build/
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
