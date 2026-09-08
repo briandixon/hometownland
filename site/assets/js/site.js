@@ -113,7 +113,7 @@
         submitBtn.disabled = false;
         submitBtn.textContent = "Submit My Property";
         errBox.textContent =
-          "We could not send that just now. Please try again, or email offers@gohometownland.com with your property details.";
+          "We could not send that just now. Please try again, or email brian@gohometownland.com with your property details.";
         errBox.classList.add("on");
         errBox.scrollIntoView({ behavior: "smooth", block: "center" });
       });
