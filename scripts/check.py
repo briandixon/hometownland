@@ -1,6 +1,7 @@
 """Pre-flight check for gohometownland.com. Run before every push.
 
     python3 scripts/check.py
+    python3 scripts/check.py --skip-drift   # for the pre-commit hook
 
 Three things go wrong on this site, and all three are silent:
 
@@ -93,6 +94,8 @@ def check_drift():
 
 
 def main():
+    skip_drift = "--skip-drift" in sys.argv
+
     print("==> Rebuilding site/ from src/")
     build = subprocess.run([sys.executable, "build.py"], cwd=ROOT,
                            capture_output=True, text=True)
@@ -100,10 +103,12 @@ def main():
         print(build.stdout + build.stderr)
         sys.exit("build.py failed")
 
+    checks = [("pages", check_pages), ("placeholders", check_placeholders)]
+    if not skip_drift:
+        checks.append(("src/site drift", check_drift))
+
     failures = []
-    for label, fn in (("pages", check_pages),
-                      ("placeholders", check_placeholders),
-                      ("src/site drift", check_drift)):
+    for label, fn in checks:
         problems = fn()
         status = "FAIL" if problems else "ok"
         print(f"  [{status:>4}] {label}")

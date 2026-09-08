@@ -15,39 +15,59 @@ path, and they cannot run in a cloud session at all.
 
 ---
 
-## The everyday change
-
-A wording fix, a new FAQ answer, a phone number. Four commands:
+## One-time setup, per clone
 
 ```bash
-# 1. edit whatever you need under src/
-python3 build.py           # regenerate site/
-python3 scripts/check.py   # verify — refuses to pass if anything is wrong
-git add -A && git commit -m "Fix the pricing sentence on How It Works"
-git push -u origin main    # live in ~1 minute
+git config core.hooksPath .githooks
 ```
 
-That is the whole process. The two middle commands are what keep it safe to
-move this fast.
+That enables the pre-commit hook. Claude Code sessions run it automatically via
+`.claude/settings.json`, so this is only for your own checkouts.
 
-### Why the two middle commands matter
+---
+
+## The everyday change
+
+A wording fix, a new FAQ answer, a phone number:
+
+```bash
+# edit whatever you need under src/
+git add -A && git commit -m "Fix the pricing sentence on How It Works"
+git push                   # live in ~1 minute
+```
+
+That is the whole process. The rebuild and the safety checks happen inside
+`git commit`:
+
+```
+pre-commit: rebuilding site/ from src/
+  [  ok] pages
+  [  ok] placeholders
+```
+
+If a check fails, the commit is refused and tells you why. Nothing half-built
+reaches a branch.
+
+### Why the hook exists
 
 `site/` is generated from `src/` and committed to the repo — Vercel serves it
 directly. So an edit to `src/` that is never rebuilt produces a commit that
 looks correct in the diff and deploys the **old** page. Nothing errors. You
 find out days later.
 
-`python3 scripts/check.py` makes that impossible to miss. It rebuilds, then
-fails on:
+The hook makes that impossible. It rebuilds `site/` and stages it into the same
+commit, then runs `scripts/check.py`, which fails on:
 
 - **stale `site/`** — `src/` was edited without a rebuild
 - **placeholder text** — `class="ph"`, `offers@`, `PO Box 000`, `[STATE]`,
   `[DATE]`, `REVIEW BEFORE LAUNCH`, stub copy
 - **a page that stopped building**, or a sitemap that lost a URL
 
-Exit 0 means safe to push. The same check runs in GitHub Actions on every PR
-and every push to `main`, so a forgotten rebuild gets caught even if you skip
-it locally.
+The same check runs in GitHub Actions on every PR and every push to `main`, so
+a clone that never enabled the hook — or an edit made in GitHub's web editor —
+is still caught before it can deploy.
+
+Run it by hand any time with `python3 scripts/check.py`.
 
 ---
 
@@ -58,7 +78,7 @@ legal copy, anything on the homepage:
 
 ```bash
 git checkout -b tweak-hero
-# edit, build, check as above
+# edit under src/
 git commit -am "Rework the hero headline"
 git push -u origin tweak-hero
 ```
@@ -128,12 +148,13 @@ No git needed, takes seconds.
 To undo it in git as well:
 
 ```bash
-git revert <bad-commit> && python3 build.py && python3 scripts/check.py
-git commit --amend --no-edit && git push
+git revert <bad-commit>
+git push
 ```
 
-The revert needs its own rebuild — reverting `src/` alone leaves `site/` stale,
-which is the same trap in reverse.
+The revert touches `src/`, so the hook rebuilds `site/` to match as part of the
+revert commit. Without the hook you would have to rebuild by hand — reverting
+`src/` alone leaves `site/` stale, which is the same trap in reverse.
 
 ---
 
@@ -151,9 +172,13 @@ These retire recurring friction rather than fixing a single change:
    so changing the default does not necessarily change it. If it still reads
    `import-site`, pushes to `main` are building previews and production is
    frozen.
-3. **Move the build to Vercel** — Build Command `python3 build.py`, Output
-   Directory `site` — so `site/` no longer needs committing at all. This
-   removes the rebuild step and the drift trap entirely, and is the single
-   biggest simplification available. Test it on a preview branch first: the
-   `/api/lead` function is currently detected because Root Directory is set to
-   `site`, and that detection has to keep working.
+3. **Optional: move the build to Vercel** — Build Command `python3 build.py`,
+   Output Directory `site`, Root Directory back to the repo root. `site/` would
+   then not be committed at all.
+
+   With the pre-commit hook in place this is now **cosmetic** — it removes diff
+   noise, not a step or a risk. It also is not free: `/api/lead` is detected
+   today only because Root Directory is `site`, so `src/api/lead.js` would have
+   to move to `api/` at the repo root, and the whole thing needs proving on a
+   preview branch with a real test submission before production. Worth doing
+   only if the `site/` diffs genuinely bother you.

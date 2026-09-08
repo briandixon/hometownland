@@ -9,22 +9,30 @@ No framework, no node build, no test suite.
 overwrites it. An edit made there disappears on the next build, usually after
 it has already been committed and forgotten.
 
-## Every change follows the same four steps
+## Every change is edit, commit, push
 
 ```bash
-# 1. edit files under src/
-python3 build.py          # 2. regenerate site/
-python3 scripts/check.py  # 3. verify — exits non-zero if anything is wrong
-git add -A && git commit  # 4. commit src/ AND site/ together
+# edit files under src/
+git add -A && git commit -m "..."
+git push
 ```
 
-`scripts/check.py` rebuilds, then fails on: a stale `site/` that does not match
-`src/`, any placeholder text reaching production, a page that stopped building,
-or a sitemap that lost a URL. Run it before every push. If it passes, the tree
-is safe.
+The `.githooks/pre-commit` hook rebuilds `site/`, verifies it, and stages the
+result into the same commit. You do not run `build.py` by hand and you cannot
+forget it. If a check fails the commit is refused with the reason.
 
-Both `src/` and the regenerated `site/` go in the **same commit**. Splitting
-them produces a commit that deploys stale HTML.
+The hook is enabled per clone by `git config core.hooksPath .githooks`. A
+`SessionStart` hook in `.claude/settings.json` runs that automatically, so a
+fresh session is already set up. **If you have disabled hooks, or the commit
+output does not say `pre-commit: rebuilding site/`, run `python3 build.py &&
+python3 scripts/check.py` yourself before committing** — `src/` and the
+regenerated `site/` must land in the same commit, or the commit deploys stale
+HTML.
+
+`scripts/check.py` fails on: a stale `site/` that does not match `src/`, any
+placeholder text reaching production, a page that stopped building, or a
+sitemap that lost a URL. CI runs it on every PR and every push to `main`, so a
+clone that never enabled the hook is still caught.
 
 ## Deploying
 

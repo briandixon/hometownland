@@ -14,6 +14,7 @@ src/                 edit these
 build.py             src/ -> site/
 serve.py             local preview with Vercel-style clean URLs
 scripts/check.py     pre-flight: rebuild, catch drift and placeholders
+.githooks/pre-commit rebuilds and verifies automatically on commit
 site/                GENERATED — never edit by hand, it is overwritten
 DEPLOY.md            how to ship a change
 CLAUDE.md            working notes for Claude Code sessions
@@ -63,13 +64,15 @@ Still outstanding, deliberately:
 production updates in about a minute; push any other branch for a preview URL.
 
 ```bash
-python3 build.py
-python3 scripts/check.py
+git config core.hooksPath .githooks    # once per clone
+# edit under src/, then:
 git add -A && git commit -m "..." && git push
 ```
 
-`scripts/check.py` refuses to pass on a stale `site/`, a placeholder, or a page
-that stopped building. The same check runs in CI on every PR.
+The pre-commit hook rebuilds `site/`, verifies it, and stages it into the same
+commit — so you never run `build.py` by hand and cannot forget it. It refuses
+the commit on a placeholder or a page that stopped building. The same checks
+run in CI on every PR and push to `main`.
 
 Full guide, including the branch traps and rollback: **[DEPLOY.md](DEPLOY.md)**.
 
