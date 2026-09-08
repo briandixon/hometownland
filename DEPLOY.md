@@ -99,20 +99,23 @@ grep -rn "old@example.com" src/
 
 ---
 
-## Two traps
+## The trap that remains
 
-**1. The GitHub default branch is `import-site`, not `main`.**
-Every new PR targets `import-site` unless you change it, and merging such a PR
-deploys **nothing** — it lands on a branch Vercel does not publish. This nearly
-shipped a no-op during the pre-launch change. Always confirm the base reads
-`main` before merging. Fixing the repo's default branch setting retires this
-trap permanently; see below.
-
-**2. Nothing in a cloud session can confirm the site went live.**
+**Nothing in a cloud session can confirm the site went live.**
 The sandbox egress proxy blocks gohometownland.com, and the connected Vercel
 account cannot see this project. A session can verify the merge landed on
 `main` and stop there. Confirming the deploy itself means opening the Vercel
 dashboard or the site in a browser.
+
+---
+
+## Fixed on 2026-09-08
+
+The GitHub default branch was `import-site`, so every new PR targeted a branch
+Vercel does not publish and merging one deployed nothing. It nearly shipped a
+no-op during the pre-launch change. **The default branch is now `main`**, so a
+PR opened normally is already correct. `import-site` still exists, caught up
+with `main` and unused — safe to delete whenever.
 
 ---
 
@@ -138,17 +141,17 @@ which is the same trap in reverse.
 
 These retire recurring friction rather than fixing a single change:
 
-1. **Set the GitHub default branch to `main`** and delete `import-site`.
-   Settings → General → Default branch. Kills trap #1.
-2. **Set the Vercel environment variables** so leads actually reach Airtable:
+1. **Set the Vercel environment variables** so leads actually reach Airtable:
    `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`, `AIRTABLE_TABLE`, and optionally
    `RESEND_API_KEY` / `NOTIFY_EMAIL` / `NOTIFY_FROM`. Until then the form
    returns success and logs to the Vercel function log — leads are recoverable
    but nobody is alerted.
-3. **Confirm Vercel's production branch is `main`**, under the project's
-   Settings → Git. If it still reads `import-site`, pushes to `main` are
-   building previews and production is frozen.
-4. **Move the build to Vercel** — Build Command `python3 build.py`, Output
+2. **Confirm Vercel's production branch is `main`**, under the project's
+   Settings → Git. Vercel stores this separately from GitHub's default branch,
+   so changing the default does not necessarily change it. If it still reads
+   `import-site`, pushes to `main` are building previews and production is
+   frozen.
+3. **Move the build to Vercel** — Build Command `python3 build.py`, Output
    Directory `site` — so `site/` no longer needs committing at all. This
    removes the rebuild step and the drift trap entirely, and is the single
    biggest simplification available. Test it on a preview branch first: the

@@ -37,15 +37,16 @@ Do **not** use the Vercel CLI or `scripts/deploy.sh`. They are a leftover from
 the original manual setup, they are not needed, and they will not run in a
 cloud session (the Vercel API is unreachable from the sandbox).
 
-### Two traps
+### One trap
 
-- **The GitHub default branch is `import-site`, not `main`.** New PRs target it
-  by default, and merging one deploys nothing. Always confirm a PR's base is
-  `main` before merging.
-- **The live domain is unreachable from the sandbox** (egress proxy blocks it)
-  and the connected Vercel MCP account cannot see this project. A session
-  cannot confirm its own deploy went live. Verify the merge landed on `main`,
-  then say plainly that the Vercel build itself was not verified.
+**The live domain is unreachable from the sandbox** (egress proxy blocks it) and
+the connected Vercel MCP account cannot see this project. A session cannot
+confirm its own deploy went live. Verify the merge landed on `main`, then say
+plainly that the Vercel build itself was not verified.
+
+The default branch was `import-site` until 2026-09-08, which made new PRs target
+a branch Vercel does not publish. It is now `main`, so a PR opened normally is
+already correct. `import-site` still exists, caught up with `main` and unused.
 
 ## Content conventions
 
