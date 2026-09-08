@@ -13,7 +13,11 @@ src/                 edit these
   vercel.json        clean URLs, cache and security headers
 build.py             src/ -> site/
 serve.py             local preview with Vercel-style clean URLs
+scripts/check.py     pre-flight: rebuild, catch drift and placeholders
+.githooks/pre-commit rebuilds and verifies automatically on commit
 site/                GENERATED — never edit by hand, it is overwritten
+DEPLOY.md            how to ship a change
+CLAUDE.md            working notes for Claude Code sessions
 ```
 
 ## Working on it
@@ -37,44 +41,43 @@ Page metadata lives in comments at the top of each file in `src/pages/`:
 `{{FORM}}` in a page expands to the full multi-step offer form. The state
 dropdown is generated from the `STATES` list in `build.py`.
 
-## Before launch
+## Placeholders
 
-Everything still needing real content is wrapped in `<span class="ph">` and
-renders with a dashed underline, so it is visible on the page rather than
-hidden in the source. Find it all with:
+The site launched on 2026-09-08; every pre-launch placeholder is now filled in.
+Anything still unfinished is wrapped in `<span class="ph">` so it renders with a
+dashed underline on the page rather than hiding in the source.
 
-```bash
-grep -o 'class="ph">[^<]*' site/*.html | sort -u
-```
+`scripts/check.py` fails the build if any placeholder — or a stale `site/` —
+reaches a push, so this stays true without anyone remembering to look.
 
-Currently outstanding:
+Still outstanding, deliberately:
 
-- `offers@gohometownland.com` — confirm this mailbox exists and is monitored
-- `PO Box 000, City, ST 00000` — real mailing address
-- `Brian Dixon` — confirm the name is right
-- `[DATE]` in privacy.html and terms.html
-- `[STATE]` in the governing-law section of terms.html
-- Testimonial stubs on the homepage, tagged "Replace before launch"
-- Both legal pages carry a `[REVIEW BEFORE LAUNCH]` note and need an attorney's eyes
+- **Real testimonials.** The homepage testimonials section was deleted rather
+  than shipped with stub quotes. Re-add it with real ones.
+- **Lead delivery.** The Vercel environment variables below are not set yet, so
+  submissions are logged to the Vercel function log instead of reaching
+  Airtable. See `DEPLOY.md`.
 
 ## Deploying
 
-The CLI is installed. Log in once — this step is interactive and cannot be
-scripted:
+**Deploy = `git push`.** Vercel is connected to this repo: push to `main` and
+production updates in about a minute; push any other branch for a preview URL.
 
 ```bash
-vercel login
+git config core.hooksPath .githooks    # once per clone
+# edit under src/, then:
+git add -A && git commit -m "..." && git push
 ```
 
-Then:
+The pre-commit hook rebuilds `site/`, verifies it, and stages it into the same
+commit — so you never run `build.py` by hand and cannot forget it. It refuses
+the commit on a placeholder or a page that stopped building. The same checks
+run in CI on every PR and push to `main`.
 
-```bash
-bash scripts/deploy.sh
-```
+Full guide, including the branch traps and rollback: **[DEPLOY.md](DEPLOY.md)**.
 
-That rebuilds, links to the `hometown-land` project, deploys to production, and
-attaches both `gohometownland.com` and `www.gohometownland.com`. Override the
-target with `VERCEL_SCOPE` / `VERCEL_PROJECT` if the slugs differ.
+`scripts/deploy.sh` and the `vercel` CLI are leftovers from the original manual
+setup. They are no longer the deploy path and cannot run in a cloud session.
 
 ## Airtable
 
