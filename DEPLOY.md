@@ -48,6 +48,11 @@ pre-commit: rebuilding site/ from src/
 If a check fails, the commit is refused and tells you why. Nothing half-built
 reaches a branch.
 
+One wrinkle: a refused commit leaves `site/` already rebuilt from the `src/`
+you were trying to commit. Fix `src/` and commit again and it sorts itself out.
+If you instead abandon the edit, run `python3 build.py` to put `site/` back in
+step — and if you forget, CI catches it before it can deploy.
+
 ### Why the hook exists
 
 `site/` is generated from `src/` and committed to the repo — Vercel serves it
