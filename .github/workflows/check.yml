@@ -1,0 +1,18 @@
+name: check
+
+# Catches the two mistakes that deploy silently: a stale site/ (someone
+# edited src/ and forgot to rebuild) and a placeholder reaching production.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/check.py
