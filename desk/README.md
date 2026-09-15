@@ -66,6 +66,24 @@ https://www.gohometownland.com/api/call-relay?key=YOUR_KEY
 The desk shows the same thing: if the header reads **"Listening — add Redis,
 cards will be missed"**, the store is not wired up.
 
+**If it says `"store":"memory"`,** add `&diag=1` to that URL. It lists which
+credentials the deployment can actually see — names only, never values:
+
+```
+https://www.gohometownland.com/api/call-relay?key=YOUR_KEY&diag=1
+```
+
+- `related` is empty → the store is not connected to **this project**, or the
+  deployment predates the connection. Connect it, then redeploy.
+- `related` lists `REDIS_URL` but no `..._REST_...` name → the store speaks only
+  the Redis wire protocol, not the REST API this relay uses. Swap it for an
+  Upstash store, which exposes both.
+- `related` lists a `..._REST_URL` and `..._REST_TOKEN` pair the relay does not
+  recognise → send me the names and I will add them.
+
+Environment variables only reach a **new** deployment. After changing anything,
+redeploy from **Deployments → ⋯ → Redeploy**.
+
 ### 2. Point Quo at it
 
 In Quo → **Settings → Integrations → Webhooks**, create a webhook for calls:
@@ -77,41 +95,57 @@ In Quo → **Settings → Integrations → Webhooks**, create a webhook for call
 Leave any existing Make webhook alone if you still want it; Quo can post to
 several places at once.
 
-### 3. Set up the desk
+### 3. Start the desk
 
-Copy `config.example.json` to `config.json` and fill it in:
+Double-click **`Start Call Desk.bat`** in the `desk` folder.
+
+The first run writes its own `config.json` and opens
+`http://127.0.0.1:8322/` in your browser. Nothing to install and nothing to
+rename.
+
+If Windows says Python is missing, the window tells you so and links to
+<https://www.python.org/downloads/>. During that install **tick "Add python.exe
+to PATH"** — without it Windows cannot find Python and the launcher will keep
+saying the same thing.
+
+### 4. Add your relay key
+
+Open `config.json` in the `desk` folder (Notepad is fine):
 
 ```json
 {
   "relay_url": "https://www.gohometownland.com/api/call-relay",
-  "relay_key": "the same long random string",
-  "land_portal_token": "your Land Portal API v2 key",
+  "relay_key": "paste your CALL_RELAY_KEY here",
+  "land_portal_token": "optional - your Land Portal API v2 key",
   "port": 8322
 }
 ```
 
-`config.json` is ignored by git, so your keys cannot end up in the public
-repository. The Land Portal token is optional — leave it out and the parcel
-detail comes from the mailer file alone.
+Until `relay_key` is filled in, the desk runs in look-up-only mode: search and
+**Test a call** work, but calls will not pop by themselves.
 
-### 4. Add your mailer files
+`config.json` is ignored by git, so your keys cannot reach the public
+repository.
 
-Drop the CSV exports into the `desk/mailers/` folder. That folder is ignored by
-git too.
+### 5. Add your mailer files
+
+Drop the CSV exports into the `desk/mailers/` folder, then start the desk again
+(or use **Mailer files → Reload from folder**). That folder is ignored by git
+too.
 
 ---
 
 ## Running it
 
-```
-cd desk
-python3 calldesk.py
-```
+Double-click **`Start Call Desk.bat`**.
 
-It opens a browser tab at `http://127.0.0.1:8322/`. **Leave both the terminal
-window and the tab open all day** — a closed tab cannot pop a card.
+**Leave both the black window and the browser tab open all day** — a closed tab
+cannot pop a card. To stop, press `Ctrl+C` in the black window, or just close
+it.
 
-To stop it, press `Ctrl+C` in the terminal.
+The black window is also the log: it prints a line for every call it sees,
+which is the first place to look when something seems wrong. It stays open
+after an error so you can read what happened.
 
 ### Day to day
 
@@ -137,8 +171,13 @@ Delete the cache file if you want fresh parcel data.
 
 ## If something is wrong
 
-**Header says "Manual lookup only"** — no `relay_url` in `config.json`. The desk
-still works for reference lookups; calls just will not pop.
+**Header says "Manual lookup only"** — `relay_key` is still empty in
+`config.json`. The desk works for look-ups; calls just will not pop.
+
+**Double-clicking the launcher flashes a window and closes** — that means it
+could not even start Python. Open the `desk` folder, hold Shift, right-click in
+the empty space, choose **Open PowerShell window here**, and run
+`py calldesk.py` to see the error.
 
 **"Relay rejected the key"** — `relay_key` here and `CALL_RELAY_KEY` on Vercel
 are different strings.

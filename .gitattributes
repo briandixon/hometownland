@@ -1,0 +1,3 @@
+# Batch files must keep CRLF endings whatever the checkout platform, or
+# Windows can mis-parse the labels the launcher uses.
+*.bat text eol=crlf
