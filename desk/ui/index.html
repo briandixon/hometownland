@@ -25,9 +25,12 @@
 <div class="wrap">
 
   <div class="sim">
-    <div class="simfield">
-      <label for="refnum">Look up by reference, name, address or APN</label>
-      <input id="refnum" class="mono" placeholder="V001-150" autocomplete="off">
+    <div class="simfield reffield">
+      <label for="refnum">Search — phone, name, address, reference or APN</label>
+      <input id="refnum" autocomplete="off" role="combobox" aria-expanded="false"
+             aria-controls="suggest" aria-autocomplete="list"
+             placeholder="269-492-8350  ·  22 s main st  ·  V001-150">
+      <div class="suggest" id="suggest" role="listbox" hidden></div>
     </div>
     <button class="findbtn" id="findbtn" type="button">Find</button>
     <div class="chips" id="chips"><span class="lbl">Press <kbd>/</kbd> to search &middot; <kbd>Esc</kbd> to clear</span></div>
