@@ -496,6 +496,11 @@
     var onMemory = s.status === "listening" && /^memory/.test(s.store || "");
     text.textContent = onMemory ? "Listening \u2014 add Redis, cards will be missed" : m[1];
     if (onMemory) dot.className = "dot off";
+    var ver = document.getElementById("version");
+    if (s.version && ver.textContent.indexOf("v") === -1) {
+      ver.textContent = "Hometown Land \u00b7 v" + s.version;
+      ver.title = "Released " + (s.released || "");
+    }
     document.getElementById("rec-count").textContent =
       s.files.length + (s.files.length === 1 ? " file" : " files") + " · " + s.records + " records";
 
@@ -607,7 +612,9 @@
       return '<button class="sg" type="button" role="option" data-i="' + i + '">' +
         '<span class="r">' + esc(h.ref) + "</span>" +
         '<span class="n">' + esc(titleCase(h.name)) + "</span>" +
-        '<span class="ph">' + (h.phone ? esc(fmtPhone(h.phone)) : "no number") + "</span>" +
+        '<span class="ph">' + (h.phone ? esc(fmtPhone(h.phone)) : "no number") +
+          (h.line && h.line !== "Primary" ? ' <span style="color:var(--live)">' + esc(h.line) + "</span>" : "") +
+          (h.dnc ? ' <span style="color:var(--alert)">DNC</span>' : "") + "</span>" +
         '<span class="a">' + esc(h.parcel || "\u2014") + "</span>" +
         (meta.length ? '<span class="meta">' + esc(meta.join("  \u00b7  ")) + "</span>" : "") +
         "</button>";

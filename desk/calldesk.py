@@ -34,6 +34,13 @@ CACHE = HERE / "cache"
 LOGS = HERE / "logs"
 CONFIG = HERE / "config.json"
 
+# Bumped whenever desk/ changes. The app runs from a copy on someone's own
+# machine, so "have you got the new one?" is otherwise unanswerable -- it is
+# printed at startup and shown in the header.
+VERSION = "1.2"
+RELEASED = "2026-09-15"
+WHATS_NEW = "search by phone, name or address as you type"
+
 DEFAULT_PORT = 8322
 POLL_SECONDS = 2.0
 
@@ -246,6 +253,19 @@ def build_entry(lead):
     }
 
 
+def query_digits_of(raw):
+    """Digits typed with no letters around them are a number worth matching.
+
+    Three is enough to be an area code; fewer is noise. A query containing any
+    letter is an address or a name, so its digits stay part of the text.
+    """
+    text = str(raw or "")
+    digits = re.sub(r"\D", "", text)
+    if len(digits) >= 3 and not re.search(r"[a-zA-Z]", text):
+        return digits
+    return ""
+
+
 def term_score(entry, term):
     """Best hit for one word across the record, or 0."""
     best = 0.0
@@ -264,19 +284,43 @@ def term_score(entry, term):
     return best
 
 
+def phone_rank(digits, query_digits):
+    """How squarely one number answers a typed fragment."""
+    if not digits or not query_digits:
+        return 0.0
+    if digits == query_digits:
+        return 120.0
+    if digits.startswith(query_digits):
+        return 95.0
+    if digits.endswith(query_digits):
+        return 90.0
+    if query_digits in digits:
+        return 70.0
+    return 0.0
+
+
 def phone_score(entry, query_digits):
     best = 0.0
-    for digits in entry["digits"]:
-        if not digits:
-            continue
-        if digits == query_digits:
-            best = max(best, 120.0)
-        elif digits.startswith(query_digits):
-            best = max(best, 95.0)
-        elif digits.endswith(query_digits):
-            best = max(best, 90.0)
-        elif query_digits in digits:
-            best = max(best, 70.0)
+    for position, digits in enumerate(entry["digits"]):
+        hit = phone_rank(digits, query_digits)
+        # the primary line edges out an alternate on an otherwise equal match
+        if hit:
+            best = max(best, hit - position * 2.0)
+    return best
+
+
+def matching_phone(lead, query_digits):
+    """The number the search actually hit, so the row can show that one."""
+    phones = lead["phones"]
+    if not phones:
+        return None
+    if not query_digits:
+        return phones[0]
+    best, best_rank = phones[0], -1.0
+    for phone in phones:
+        hit = phone_rank(ten_digits(phone["num"]), query_digits)
+        if hit > best_rank:
+            best, best_rank = phone, hit
     return best
 
 
@@ -383,10 +427,8 @@ class Library:
         if exact:
             return [exact]
 
-        digits = re.sub(r"\D", "", raw)
-        # Digits with no letters around them are scored as both a phone number
-        # and a street number, so an area code and a house number both work.
-        query_digits = digits if len(digits) >= 3 and not re.search(r"[a-zA-Z]", raw) else ""
+        digits = query_digits_of(raw)
+        query_digits = digits
         terms = [] if query_digits else normalize(raw)
         if not terms and not query_digits:
             return []
@@ -405,14 +447,17 @@ class Library:
 
     def suggest(self, query, limit=8):
         """Compact rows for the type-ahead list."""
+        wanted = query_digits_of(query)
         out = []
         for lead in self.rank(query, limit):
-            phone = lead["phones"][0]["num"] if lead["phones"] else ""
+            phone = matching_phone(lead, wanted)
             out.append({
                 "ref": lead["ref"],
                 "name": lead["greet"] or lead["owner"],
                 "parcel": ", ".join(filter(None, [lead["pAddr"], lead["pCity"], lead["pState"]])),
-                "phone": phone,
+                "phone": phone["num"] if phone else "",
+                "line": phone["label"] if phone else "",
+                "dnc": bool(phone and phone.get("dnc")),
                 "acres": lead["calcAcres"] or lead["acres"],
                 "offer": lead["offer"],
                 "source": lead["source"],
@@ -569,6 +614,8 @@ class Line:
         with self.lock:
             current = json.loads(json.dumps(self.current)) if self.current else None
         return {
+            "version": VERSION,
+            "released": RELEASED,
             "status": self.status,
             "detail": self.detail,
             "store": self.store,
@@ -718,7 +765,8 @@ class Server(socketserver.ThreadingTCPServer):
 def main():
     fresh = ensure_config()
     cfg = load_config()
-    print("Hometown Land Call Desk")
+    print(f"Hometown Land Call Desk {VERSION}  ({RELEASED})")
+    print(f"  this build: {WHATS_NEW}")
     print("-" * 46)
     if fresh:
         print(f"  created {CONFIG.name} — open it to switch on live calls")
