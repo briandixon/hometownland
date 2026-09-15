@@ -490,7 +490,12 @@
     };
     var m = map[s.status] || map.off;
     dot.className = "dot " + m[0];
-    text.textContent = m[1];
+    // A relay running on memory only pops the card when the call and the poll
+    // happen to reach the same copy of the function. Say so rather than let it
+    // look like an intermittent fault.
+    var onMemory = s.status === "listening" && /^memory/.test(s.store || "");
+    text.textContent = onMemory ? "Listening \u2014 add Redis, cards will be missed" : m[1];
+    if (onMemory) dot.className = "dot off";
     document.getElementById("rec-count").textContent =
       s.files.length + (s.files.length === 1 ? " file" : " files") + " · " + s.records + " records";
 

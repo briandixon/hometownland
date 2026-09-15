@@ -29,25 +29,42 @@ In **Vercel → the gohometownland project → Settings → Environment Variable
 
 | Name | Value |
 | --- | --- |
-| `CALL_RELAY_KEY` | A long random string you invent. Treat it like a password. |
+| `CALL_RELAY_KEY` | A long random string. Treat it like a password — see below. |
 | `QUO_INBOX_ID` | `PNu6laiBJX` — optional, this is already the default |
 
-Then **Storage → add Upstash Redis** from the Vercel dashboard. It sets
-`KV_REST_API_URL` and `KV_REST_API_TOKEN` for you.
+**The key must be long and random.** The relay sits on a public domain, so a
+guessable value lets anyone see who is calling you and pop false cards on your
+screen. Something like `openssl rand -hex 24` output, not a phrase built from
+your company name.
 
-> Without the Redis step the relay still answers, but it holds the call in
-> memory. Vercel runs many copies of the endpoint, so the copy that hears the
-> call is usually not the copy the desk asks — and the card will only appear
-> sometimes. Add the store.
+Then **Storage → add Redis** from the Vercel dashboard. Whichever integration
+you use sets the variables for you; the relay accepts either naming
+(`KV_REST_API_*` or `UPSTASH_REDIS_REST_*`), so you do not have to match them
+by hand.
 
-Redeploy (a `git push` does it), then confirm the endpoint is alive:
+> Without a store the relay still answers, but it holds the call in memory.
+> Vercel runs many copies of the endpoint, so the copy that hears the call is
+> usually not the copy the desk asks — and the card will only appear
+> *sometimes*, which reads like a flaky bug rather than a missing setting.
+
+**The relay only exists once its code is on `main`.** Vercel publishes `main` to
+gohometownland.com; any other branch gets a preview URL instead. Merge first,
+then visit:
 
 ```
 https://www.gohometownland.com/api/call-relay?key=YOUR_KEY
 ```
 
-You should see `{"ok":true,"call":null}`. If it says `bad key`, the value does
-not match. If it says `relay not configured`, the variable did not save.
+| What you see | What it means |
+| --- | --- |
+| `{"ok":true,"call":null,"store":"upstash"}` | Working, with the shared store. This is the one you want. |
+| `…"store":"memory"` | No store found. Cards will be missed. Add Redis. |
+| `{"ok":false,"error":"bad key"}` | The key in the URL is not `CALL_RELAY_KEY`. |
+| `{"ok":false,"error":"relay not configured"}` | `CALL_RELAY_KEY` did not save. |
+| A 404 page | Not deployed — the code is not on `main` yet. |
+
+The desk shows the same thing: if the header reads **"Listening — add Redis,
+cards will be missed"**, the store is not wired up.
 
 ### 2. Point Quo at it
 

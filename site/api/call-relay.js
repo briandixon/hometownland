@@ -16,10 +16,18 @@
  * Environment variables (Vercel > Project > Settings > Environment Variables):
  *   CALL_RELAY_KEY    Required. Shared secret. Without it the endpoint is off.
  *   QUO_INBOX_ID      Optional. Only accept calls to this inbox. Default PNu6laiBJX.
- *   KV_REST_API_URL   Optional but recommended, set for you when you add
- *   KV_REST_API_TOKEN Upstash Redis from the Vercel dashboard. Without a store
- *                     the event is held in memory, which only works when the
- *                     POST and the GET happen to hit the same instance.
+ *
+ * A Redis store is strongly recommended: Vercel runs many copies of this
+ * function, so without shared state the copy that hears the call is usually
+ * not the copy the desk asks, and the card appears only sometimes. Adding
+ * Redis from the Vercel dashboard sets the variables for you, but the names
+ * differ between the integrations, so both spellings are accepted:
+ *
+ *   KV_REST_API_URL        + KV_REST_API_TOKEN          (Vercel KV)
+ *   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN   (Upstash marketplace)
+ *
+ * A GET reports which one is in use as `store`, so this is checkable from a
+ * browser rather than guessable.
  */
 
 const EVENT_KEY = "calldesk:ringing";
@@ -29,38 +37,49 @@ const EVENT_TTL = 90; // seconds; a call not collected by then is stale anyway
 let memory = null;
 
 function kv() {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  return url && token ? { url: url.replace(/\/$/, ""), token } : null;
+  const env = process.env;
+  const pairs = [
+    [env.KV_REST_API_URL, env.KV_REST_API_TOKEN, "vercel-kv"],
+    [env.UPSTASH_REDIS_REST_URL, env.UPSTASH_REDIS_REST_TOKEN, "upstash"],
+  ];
+  for (const [url, token, name] of pairs) {
+    if (url && token) return { url: String(url).replace(/\/+$/, ""), token, name };
+  }
+  return null;
 }
 
 async function put(event) {
   const store = kv();
-  if (!store) {
-    memory = event;
-    return "memory";
+  // Memory is the fallback, and is also kept alongside the store so a GET that
+  // lands on this same instance still answers if the store is having a moment.
+  memory = event;
+  if (!store) return "memory";
+  try {
+    const res = await fetch(`${store.url}/set/${EVENT_KEY}?EX=${EVENT_TTL}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${store.token}` },
+      body: JSON.stringify(event),
+    });
+    if (!res.ok) return `memory (store said ${res.status})`;
+    return store.name;
+  } catch {
+    return "memory (store unreachable)";
   }
-  await fetch(`${store.url}/set/${EVENT_KEY}?EX=${EVENT_TTL}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${store.token}` },
-    body: JSON.stringify(event),
-  });
-  return "store";
 }
 
 async function take() {
   const store = kv();
   if (!store) return memory;
-  const res = await fetch(`${store.url}/get/${EVENT_KEY}`, {
-    headers: { Authorization: `Bearer ${store.token}` },
-  });
-  if (!res.ok) return null;
-  const body = await res.json();
-  if (!body || body.result == null) return null;
   try {
+    const res = await fetch(`${store.url}/get/${EVENT_KEY}`, {
+      headers: { Authorization: `Bearer ${store.token}` },
+    });
+    if (!res.ok) return memory;
+    const body = await res.json();
+    if (!body || body.result == null) return null;
     return typeof body.result === "string" ? JSON.parse(body.result) : body.result;
   } catch {
-    return null;
+    return memory;
   }
 }
 
@@ -127,14 +146,16 @@ export default async function handler(req, res) {
 
   // ---- the desk, asking whether anyone is calling ----
   if (req.method === "GET") {
+    const store = kv();
+    const where = store ? store.name : "memory";
     const event = await take();
-    if (!event) return res.status(200).json({ ok: true, call: null });
+    if (!event) return res.status(200).json({ ok: true, call: null, store: where });
 
     const age = (Date.now() - Date.parse(event.at)) / 1000;
     if (!Number.isFinite(age) || age > EVENT_TTL) {
-      return res.status(200).json({ ok: true, call: null });
+      return res.status(200).json({ ok: true, call: null, store: where });
     }
-    return res.status(200).json({ ok: true, call: event });
+    return res.status(200).json({ ok: true, call: event, store: where });
   }
 
   if (req.method !== "POST") {
@@ -146,6 +167,7 @@ export default async function handler(req, res) {
   // Quo retries on a non-2xx, so anything we deliberately ignore still answers
   // 200. Only a genuine failure on our side should look like a failure.
   let payload = req.body;
+  if (payload && typeof payload.byteLength === "number") payload = payload.toString("utf8");
   if (typeof payload === "string") {
     try {
       payload = JSON.parse(payload);

@@ -309,6 +309,7 @@ class Line:
         self.parcels = parcels
         self.current = None       # the call on screen right now
         self.last_call_id = None
+        self.store = ""           # which shared store the relay is using
         self.status = "off" if not cfg["relay_url"] else "starting"
         self.detail = "" if cfg["relay_url"] else "no relay configured — manual lookup only"
         self.lock = threading.Lock()
@@ -340,6 +341,7 @@ class Line:
                                     context=ssl.create_default_context()) as resp:
             body = json.loads(resp.read().decode("utf-8"))
 
+        self.store = str(body.get("store") or "")
         call = body.get("call")
         if not call or call.get("callId") == self.last_call_id:
             return
@@ -378,6 +380,7 @@ class Line:
         return {
             "status": self.status,
             "detail": self.detail,
+            "store": self.store,
             "call": current,
             "files": self.library.files,
             "records": len(self.library.leads),
