@@ -20,3 +20,14 @@ build/
 # --- OS / editor cruft ---
 .DS_Store
 Thumbs.db
+
+# --- Call Desk: seller data must never reach this PUBLIC repo ---
+# Mailer exports carry owner names, home addresses, personal phone numbers,
+# emails and DNC flags. git keeps history forever, so a single accidental
+# commit cannot be undone by deleting the file later.
+desk/mailers/*
+!desk/mailers/README.txt
+desk/cache/
+desk/logs/
+desk/config.json
+*.csv
