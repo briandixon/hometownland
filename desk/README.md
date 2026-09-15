@@ -66,6 +66,24 @@ https://www.gohometownland.com/api/call-relay?key=YOUR_KEY
 The desk shows the same thing: if the header reads **"Listening — add Redis,
 cards will be missed"**, the store is not wired up.
 
+**If it says `"store":"memory"`,** add `&diag=1` to that URL. It lists which
+credentials the deployment can actually see — names only, never values:
+
+```
+https://www.gohometownland.com/api/call-relay?key=YOUR_KEY&diag=1
+```
+
+- `related` is empty → the store is not connected to **this project**, or the
+  deployment predates the connection. Connect it, then redeploy.
+- `related` lists `REDIS_URL` but no `..._REST_...` name → the store speaks only
+  the Redis wire protocol, not the REST API this relay uses. Swap it for an
+  Upstash store, which exposes both.
+- `related` lists a `..._REST_URL` and `..._REST_TOKEN` pair the relay does not
+  recognise → send me the names and I will add them.
+
+Environment variables only reach a **new** deployment. After changing anything,
+redeploy from **Deployments → ⋯ → Redeploy**.
+
 ### 2. Point Quo at it
 
 In Quo → **Settings → Integrations → Webhooks**, create a webhook for calls:

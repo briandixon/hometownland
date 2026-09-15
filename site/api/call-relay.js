@@ -27,7 +27,10 @@
  *   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN   (Upstash marketplace)
  *
  * A GET reports which one is in use as `store`, so this is checkable from a
- * browser rather than guessable.
+ * browser rather than guessable. Adding &diag=1 lists which of the candidate
+ * variables the function can actually see -- names only, never values -- which
+ * is the quickest way to tell "the store is not connected to this project"
+ * apart from "the store is connected but exposes different variable names".
  */
 
 const EVENT_KEY = "calldesk:ringing";
@@ -142,6 +145,31 @@ export default async function handler(req, res) {
   const offered = url.searchParams.get("key") || req.headers["x-relay-key"] || "";
   if (!sameSecret(offered, secret)) {
     return res.status(401).json({ ok: false, error: "bad key" });
+  }
+
+  // ---- which credentials can this deployment actually see? ----
+  // Names and presence only. Values are never returned, by anyone, ever.
+  if (req.method === "GET" && url.searchParams.get("diag")) {
+    const names = [
+      "KV_REST_API_URL", "KV_REST_API_TOKEN",
+      "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
+      "KV_URL", "REDIS_URL", "CALL_RELAY_KEY", "QUO_INBOX_ID",
+    ];
+    const present = {};
+    for (const n of names) present[n] = Boolean(process.env[n]);
+
+    const store = kv();
+    return res.status(200).json({
+      ok: true,
+      store: store ? store.name : "memory",
+      present,
+      // Anything starting with these prefixes, so a naming we do not yet know
+      // about still shows up here instead of failing silently.
+      related: Object.keys(process.env)
+        .filter((n) => /^(KV_|UPSTASH_|REDIS_)/.test(n))
+        .sort(),
+      deployedAt: process.env.VERCEL_DEPLOYMENT_ID ? "vercel" : "unknown",
+    });
   }
 
   // ---- the desk, asking whether anyone is calling ----
