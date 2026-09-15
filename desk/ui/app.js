@@ -557,11 +557,116 @@
       tick();
     });
   });
-  document.getElementById("findbtn").addEventListener("click", function () {
-    find(document.getElementById("refnum").value);
+  /* ---------- type-ahead ----------
+     The list is the primary way in: matching runs on the desk, so it can be
+     generous about how an address is typed -- "653 cr", "county road 653" and
+     "45341 County Rd 653" all reach the same parcel. */
+  var box = document.getElementById("refnum");
+  var panel = document.getElementById("suggest");
+  var hits = [];
+  var cursor = -1;
+  var debounce = null;
+  var lastQuery = "";
+
+  function closeSuggest() {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    box.setAttribute("aria-expanded", "false");
+    hits = [];
+    cursor = -1;
+  }
+
+  function highlight() {
+    Array.prototype.forEach.call(panel.children, function (el, i) {
+      el.classList.toggle("on", i === cursor);
+      if (i === cursor && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function pick(i) {
+    var hit = hits[i];
+    if (!hit) return;
+    box.value = hit.ref;
+    closeSuggest();
+    find(hit.ref);
+  }
+
+  function drawSuggest(rows, query) {
+    hits = rows;
+    cursor = -1;
+    if (!rows.length) {
+      panel.innerHTML = '<div class="sg-empty">Nothing matches <b>' + esc(query) + "</b></div>";
+      panel.hidden = false;
+      box.setAttribute("aria-expanded", "true");
+      return;
+    }
+    panel.innerHTML = rows.map(function (h, i) {
+      var meta = [];
+      if (h.acres) meta.push(h.acres + " ac");
+      if (h.offer) meta.push("offered " + usd0(h.offer));
+      return '<button class="sg" type="button" role="option" data-i="' + i + '">' +
+        '<span class="r">' + esc(h.ref) + "</span>" +
+        '<span class="n">' + esc(titleCase(h.name)) + "</span>" +
+        '<span class="ph">' + (h.phone ? esc(fmtPhone(h.phone)) : "no number") + "</span>" +
+        '<span class="a">' + esc(h.parcel || "\u2014") + "</span>" +
+        (meta.length ? '<span class="meta">' + esc(meta.join("  \u00b7  ")) + "</span>" : "") +
+        "</button>";
+    }).join("");
+    panel.hidden = false;
+    box.setAttribute("aria-expanded", "true");
+  }
+
+  function askSuggest() {
+    var query = box.value.trim();
+    if (query.length < 2) { closeSuggest(); lastQuery = ""; return; }
+    if (query === lastQuery) return;
+    lastQuery = query;
+    api("/api/suggest?q=" + encodeURIComponent(query))
+      .then(function (r) {
+        if (box.value.trim() !== query) return;   // a later keystroke won
+        drawSuggest(r.hits || [], query);
+      })
+      .catch(function () { closeSuggest(); });
+  }
+
+  box.addEventListener("input", function () {
+    clearTimeout(debounce);
+    debounce = setTimeout(askSuggest, 110);
   });
-  document.getElementById("refnum").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") { e.preventDefault(); find(this.value); }
+
+  box.addEventListener("keydown", function (e) {
+    var open = !panel.hidden && hits.length;
+    if (e.key === "ArrowDown" && open) {
+      e.preventDefault();
+      cursor = (cursor + 1) % hits.length;
+      highlight();
+    } else if (e.key === "ArrowUp" && open) {
+      e.preventDefault();
+      cursor = cursor <= 0 ? hits.length - 1 : cursor - 1;
+      highlight();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (open && cursor >= 0) pick(cursor);
+      else { closeSuggest(); find(this.value); }
+    } else if (e.key === "Escape" && !panel.hidden) {
+      e.stopPropagation();          // close the list, do not clear the call
+      closeSuggest();
+    }
+  });
+
+  panel.addEventListener("mousedown", function (e) {
+    var b = e.target.closest(".sg");
+    if (!b) return;
+    e.preventDefault();             // keep focus off the blur handler
+    pick(+b.dataset.i);
+  });
+
+  box.addEventListener("blur", function () { setTimeout(closeSuggest, 120); });
+  box.addEventListener("focus", function () { lastQuery = ""; askSuggest(); });
+
+  document.getElementById("findbtn").addEventListener("click", function () {
+    closeSuggest();
+    find(box.value);
   });
 
   document.addEventListener("keydown", function (e) {
@@ -573,7 +678,8 @@
       box.select();
     } else if (e.key === "Escape") {
       if (typing) e.target.blur();
-      document.getElementById("refnum").value = "";
+      box.value = "";
+      closeSuggest();
       clearCall();
     }
   });

@@ -126,6 +126,42 @@ def ten_digits(raw):
     return d if len(d) == 10 else ""
 
 
+# --------------------------------------------------------------------------
+# search
+# --------------------------------------------------------------------------
+
+# This county's exports spell the same road both ways -- "653 Cr" and
+# "45341 County Road 653" -- and directionals and street types come through
+# either long or short. Both the query and the record are folded to the short
+# form so "22 s main st" and "22 South Main Street" meet in the middle.
+PHRASES = [
+    ("county road", "cr"),
+    ("county rd", "cr"),
+    ("state highway", "hwy"),
+    ("state route", "hwy"),
+    ("post office box", "po box"),
+]
+
+WORDS = {
+    "north": "n", "south": "s", "east": "e", "west": "w",
+    "northeast": "ne", "northwest": "nw", "southeast": "se", "southwest": "sw",
+    "street": "st", "avenue": "ave", "av": "ave", "road": "rd", "drive": "dr",
+    "lane": "ln", "court": "ct", "circle": "cir", "boulevard": "blvd",
+    "highway": "hwy", "place": "pl", "terrace": "ter", "parkway": "pkwy",
+    "trail": "trl", "route": "rt", "square": "sq", "point": "pt",
+    "township": "twp", "county": "co", "saint": "st", "mount": "mt",
+    "apartment": "apt", "suite": "ste", "unit": "apt",
+}
+
+
+def normalize(text):
+    """Fold an address or name to comparable tokens."""
+    low = " " + re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip() + " "
+    for long_form, short in PHRASES:
+        low = low.replace(f" {long_form} ", f" {short} ")
+    return [WORDS.get(tok, tok) for tok in low.split()]
+
+
 PHONE_COLUMNS = [
     ("Primary", "Phone"),
     ("Alt 1", "Alt Phone 1"),
@@ -179,6 +215,103 @@ def map_row(row, source):
     }
 
 
+# Each field carries its own weight: the parcel is what a caller rings about,
+# so a hit there should outrank the same word appearing in a mailing address.
+FIELD_WEIGHTS = (
+    ("parcel", 6.0),
+    ("owner", 4.0),
+    ("ref", 5.0),
+    ("mail", 2.0),
+    ("apn", 3.0),
+)
+
+
+def build_entry(lead):
+    """Pre-tokenize one lead so typing stays responsive."""
+    parcel = " ".join(filter(None, [
+        lead["pAddr"], lead["pCity"], lead["pState"], lead["pZip"], lead["pCounty"]]))
+    mail = " ".join(filter(None, [
+        lead["mAddr"], lead["mCity"], lead["mState"], lead["mZip"]]))
+    return {
+        "lead": lead,
+        "fields": {
+            "parcel": normalize(parcel),
+            "owner": normalize(f'{lead["owner"]} {lead["greet"]}'),
+            "ref": normalize(lead["ref"]),
+            "mail": normalize(mail),
+            "apn": normalize(lead["apn"]),
+        },
+        "digits": [re.sub(r"\D", "", p["num"]) for p in lead["phones"]],
+        "apn_digits": re.sub(r"\D", "", lead["apn"]),
+    }
+
+
+def term_score(entry, term):
+    """Best hit for one word across the record, or 0."""
+    best = 0.0
+    for field, weight in FIELD_WEIGHTS:
+        for position, token in enumerate(entry["fields"][field]):
+            if token == term:
+                hit = weight * 2.0
+            elif token.startswith(term):
+                hit = weight * 1.4
+            elif len(term) >= 4 and term in token:
+                hit = weight * 0.8
+            else:
+                continue
+            # earlier words carry more signal: a house number leads an address
+            best = max(best, hit + max(0.0, 1.5 - position * 0.15))
+    return best
+
+
+def phone_score(entry, query_digits):
+    best = 0.0
+    for digits in entry["digits"]:
+        if not digits:
+            continue
+        if digits == query_digits:
+            best = max(best, 120.0)
+        elif digits.startswith(query_digits):
+            best = max(best, 95.0)
+        elif digits.endswith(query_digits):
+            best = max(best, 90.0)
+        elif query_digits in digits:
+            best = max(best, 70.0)
+    return best
+
+
+def score_entry(entry, terms, query_digits):
+    """How well one record answers the query, or None if it does not.
+
+    A query of digits alone is ambiguous -- "388" is both a house number and
+    part of a phone number -- so it is scored against both and the better one
+    wins. A query with any letters in it is text only, and then every word has
+    to land somewhere: narrowing the query must narrow the results.
+    """
+    if query_digits:
+        parcel = entry["fields"]["parcel"]
+        street = 0.0
+        if query_digits in parcel:
+            # An exact street number outranks digits buried inside a phone,
+            # but not a phone that genuinely starts or ends with them.
+            street = 92.0 if parcel and parcel[0] == query_digits else 88.0
+        best = max(
+            phone_score(entry, query_digits),
+            street,
+            term_score(entry, query_digits),
+            40.0 if query_digits in entry["apn_digits"] else 0.0,
+        )
+        return best or None
+
+    total = 0.0
+    for term in terms:
+        hit = term_score(entry, term)
+        if not hit:
+            return None          # this word matched nothing: not a result
+        total += hit
+    return total
+
+
 class Library:
     """Every mailer file, indexed by phone number and by reference."""
 
@@ -187,6 +320,7 @@ class Library:
         self.leads = []
         self.by_phone = {}
         self.by_ref = {}
+        self.index = []
         self.loaded_at = 0.0
 
     def load(self):
@@ -195,7 +329,7 @@ class Library:
         # campaign — the offer actually on their letter.
         paths = sorted(MAILERS.glob("*.csv"), key=lambda p: p.stat().st_mtime)
 
-        files, leads, by_phone, by_ref = [], [], {}, {}
+        files, leads, by_phone, by_ref, index = [], [], {}, {}, []
         for path in paths:
             try:
                 with path.open(encoding="utf-8-sig", newline="") as fh:
@@ -211,6 +345,7 @@ class Library:
                     continue
                 lead = map_row(raw, path.name)
                 leads.append(lead)
+                index.append(build_entry(lead))
                 if lead["phones"]:
                     reachable += 1
                 for ph in lead["phones"]:
@@ -223,6 +358,7 @@ class Library:
 
         self.files, self.leads = files, leads
         self.by_phone, self.by_ref = by_phone, by_ref
+        self.index = index
         self.loaded_at = time.time()
         return self
 
@@ -233,26 +369,54 @@ class Library:
         lead, phone = hit
         return {"lead": lead, "phone": phone}
 
-    def search(self, query):
-        """Exact reference wins; otherwise match name, address or APN."""
-        q = str(query or "").strip().upper()
-        if not q:
+    def rank(self, query, limit=60):
+        """Best matches for a free-text query, highest score first.
+
+        Handles a reference, a phone number in any punctuation, an owner name,
+        an APN, or a loosely typed address.
+        """
+        raw = str(query or "").strip()
+        if not raw:
             return []
-        exact = self.by_ref.get(q.replace(" ", ""))
+
+        exact = self.by_ref.get(raw.upper().replace(" ", ""))
         if exact:
             return [exact]
 
-        needle = re.sub(r"[^A-Z0-9]", "", q)
-        if not needle:
+        digits = re.sub(r"\D", "", raw)
+        # Digits with no letters around them are scored as both a phone number
+        # and a street number, so an area code and a house number both work.
+        query_digits = digits if len(digits) >= 3 and not re.search(r"[a-zA-Z]", raw) else ""
+        terms = [] if query_digits else normalize(raw)
+        if not terms and not query_digits:
             return []
+
+        scored = []
+        for entry in self.index:
+            value = score_entry(entry, terms, query_digits)
+            if value is not None:
+                scored.append((value, entry["lead"]))
+
+        scored.sort(key=lambda pair: -pair[0])
+        return [lead for _, lead in scored[:limit]]
+
+    def search(self, query):
+        return self.rank(query)
+
+    def suggest(self, query, limit=8):
+        """Compact rows for the type-ahead list."""
         out = []
-        for lead in self.leads:
-            hay = " ".join([lead["ref"], lead["owner"], lead["greet"],
-                            lead["pAddr"], lead["pCity"], lead["apn"], lead["mAddr"]])
-            if needle in re.sub(r"[^A-Z0-9]", "", hay.upper()):
-                out.append(lead)
-                if len(out) >= 60:
-                    break
+        for lead in self.rank(query, limit):
+            phone = lead["phones"][0]["num"] if lead["phones"] else ""
+            out.append({
+                "ref": lead["ref"],
+                "name": lead["greet"] or lead["owner"],
+                "parcel": ", ".join(filter(None, [lead["pAddr"], lead["pCity"], lead["pState"]])),
+                "phone": phone,
+                "acres": lead["calcAcres"] or lead["acres"],
+                "offer": lead["offer"],
+                "source": lead["source"],
+            })
         return out
 
 
@@ -473,6 +637,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     lead = dict(lead)
             return self._send(200, {"hits": [
                 {"lead": h, "parcel": self.parcels.cached(h.get("pid"))} for h in hits]})
+
+        if route == "/api/suggest":
+            try:
+                limit = max(1, min(12, int(q.get("limit", ["8"])[0])))
+            except ValueError:
+                limit = 8
+            return self._send(200, {"hits": self.library.suggest(q.get("q", [""])[0], limit)})
 
         if route == "/api/reload":
             self.library.load()
