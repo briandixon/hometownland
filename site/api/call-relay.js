@@ -23,8 +23,13 @@
  * Redis from the Vercel dashboard sets the variables for you, but the names
  * differ between the integrations, so both spellings are accepted:
  *
- *   KV_REST_API_URL        + KV_REST_API_TOKEN          (Vercel KV)
- *   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN   (Upstash marketplace)
+ *   KV_REST_API_URL        + KV_REST_API_TOKEN          (Vercel KV, HTTPS)
+ *   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN   (Upstash, HTTPS)
+ *   REDIS_URL / KV_URL                                  (any Redis, TCP)
+ *
+ * The HTTPS stores are preferred because a request is all they need. A plain
+ * redis:// URL cannot be reached with fetch at all, so those go over a socket
+ * instead, speaking just enough of the Redis protocol for one SET and one GET.
  *
  * A GET reports which one is in use as `store`, so this is checkable from a
  * browser rather than guessable. Adding &diag=1 lists which of the candidate
@@ -33,22 +38,148 @@
  * apart from "the store is connected but exposes different variable names".
  */
 
+import net from "node:net";
+import tls from "node:tls";
+
 const EVENT_KEY = "calldesk:ringing";
 const EVENT_TTL = 90; // seconds; a call not collected by then is stale anyway
 
 // Fallback when no store is configured. Survives only within one instance.
 let memory = null;
 
-function kv() {
+/** An HTTPS-addressable store, or null. */
+function restStore() {
   const env = process.env;
   const pairs = [
     [env.KV_REST_API_URL, env.KV_REST_API_TOKEN, "vercel-kv"],
     [env.UPSTASH_REDIS_REST_URL, env.UPSTASH_REDIS_REST_TOKEN, "upstash"],
   ];
   for (const [url, token, name] of pairs) {
-    if (url && token) return { url: String(url).replace(/\/+$/, ""), token, name };
+    if (url && token) {
+      return { kind: "rest", name, url: String(url).replace(/\/+$/, ""), token };
+    }
   }
   return null;
+}
+
+/** A redis:// or rediss:// URL, or null. */
+function wireStore() {
+  const raw = process.env.REDIS_URL || process.env.KV_URL;
+  if (!raw) return null;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "redis:" && u.protocol !== "rediss:") return null;
+  return {
+    kind: "wire",
+    name: "redis",
+    host: u.hostname,
+    port: Number(u.port) || 6379,
+    secure: u.protocol === "rediss:",
+    username: decodeURIComponent(u.username || ""),
+    password: decodeURIComponent(u.password || ""),
+  };
+}
+
+function kv() {
+  return restStore() || wireStore();
+}
+
+/** Encode one command in the Redis wire format. */
+function resp(args) {
+  let out = `*${args.length}\r\n`;
+  for (const a of args) {
+    const s = String(a);
+    out += `$${Buffer.byteLength(s)}\r\n${s}\r\n`;
+  }
+  return out;
+}
+
+/** Read back a pipeline of replies. Enough of RESP for SET, GET and AUTH. */
+function parseReplies(buf) {
+  const out = [];
+  let i = 0;
+  while (i < buf.length) {
+    const type = buf[i];
+    const nl = buf.indexOf("\r\n", i);
+    if (nl === -1) break;
+    const head = buf.slice(i + 1, nl).toString();
+
+    if (type === 0x2b || type === 0x3a) {        // +status  :integer
+      out.push(head);
+      i = nl + 2;
+    } else if (type === 0x2d) {                   // -error
+      out.push(new Error(head));
+      i = nl + 2;
+    } else if (type === 0x24) {                   // $bulk
+      const len = Number(head);
+      if (Number.isNaN(len) || len < 0) {
+        out.push(null);
+        i = nl + 2;
+      } else {
+        const start = nl + 2;
+        out.push(buf.slice(start, start + len).toString());
+        i = start + len + 2;
+      }
+    } else {
+      break;                                      // anything else: not ours
+    }
+  }
+  return out;
+}
+
+/**
+ * Run one command against a redis:// store.
+ *
+ * A serverless invocation is short-lived, so there is nothing to gain from
+ * keeping the socket: AUTH, the command and QUIT are pipelined in a single
+ * write, and the server closing the connection is the signal to parse. Any
+ * failure resolves null rather than throwing -- a call still pops from the
+ * in-memory copy, it just may not reach another instance.
+ */
+function wireCommand(store, args) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const chunks = [];
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.destroy();
+      } catch {
+        /* already gone */
+      }
+      resolve(value);
+    };
+
+    const onReady = () => {
+      const pipeline = [];
+      if (store.password) {
+        pipeline.push(store.username
+          ? ["AUTH", store.username, store.password]
+          : ["AUTH", store.password]);
+      }
+      pipeline.push(args, ["QUIT"]);
+      socket.write(pipeline.map(resp).join(""));
+    };
+
+    const options = { host: store.host, port: store.port };
+    const socket = store.secure
+      ? tls.connect({ ...options, servername: store.host }, onReady)
+      : net.connect(options, onReady);
+
+    socket.setTimeout(4000, () => finish(null));
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("error", () => finish(null));
+    socket.on("end", () => {
+      const replies = parseReplies(Buffer.concat(chunks));
+      const wanted = replies[store.password ? 1 : 0];
+      finish(wanted instanceof Error ? null : wanted);
+    });
+  });
 }
 
 async function put(event) {
@@ -57,6 +188,15 @@ async function put(event) {
   // lands on this same instance still answers if the store is having a moment.
   memory = event;
   if (!store) return "memory";
+
+  if (store.kind === "wire") {
+    const ok = await wireCommand(
+      store,
+      ["SET", EVENT_KEY, JSON.stringify(event), "EX", String(EVENT_TTL)],
+    );
+    return ok ? store.name : "memory (redis unreachable)";
+  }
+
   try {
     const res = await fetch(`${store.url}/set/${EVENT_KEY}?EX=${EVENT_TTL}`, {
       method: "POST",
@@ -73,6 +213,17 @@ async function put(event) {
 async function take() {
   const store = kv();
   if (!store) return memory;
+
+  if (store.kind === "wire") {
+    const raw = await wireCommand(store, ["GET", EVENT_KEY]);
+    if (raw == null) return memory;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
   try {
     const res = await fetch(`${store.url}/get/${EVENT_KEY}`, {
       headers: { Authorization: `Bearer ${store.token}` },

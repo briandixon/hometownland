@@ -37,10 +37,16 @@ guessable value lets anyone see who is calling you and pop false cards on your
 screen. Something like `openssl rand -hex 24` output, not a phrase built from
 your company name.
 
-Then **Storage → add Redis** from the Vercel dashboard. Whichever integration
-you use sets the variables for you; the relay accepts either naming
-(`KV_REST_API_*` or `UPSTASH_REDIS_REST_*`), so you do not have to match them
-by hand.
+Then **Storage → add Redis** from the Vercel dashboard. Whichever provider you
+pick sets the variables for you, and the relay takes any of them:
+
+| Variables | How it is reached |
+| --- | --- |
+| `KV_REST_API_URL` + `KV_REST_API_TOKEN` | HTTPS |
+| `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | HTTPS |
+| `REDIS_URL` or `KV_URL` (`redis://`, `rediss://`) | a socket, speaking the Redis protocol |
+
+So there is nothing to match up by hand, and no need to prefer one provider.
 
 > Without a store the relay still answers, but it holds the call in memory.
 > Vercel runs many copies of the endpoint, so the copy that hears the call is
@@ -57,7 +63,8 @@ https://www.gohometownland.com/api/call-relay?key=YOUR_KEY
 
 | What you see | What it means |
 | --- | --- |
-| `{"ok":true,"call":null,"store":"upstash"}` | Working, with the shared store. This is the one you want. |
+| `{"ok":true,"call":null,"store":"redis"}` | Working, over a socket. This is the one you want. |
+| `…"store":"upstash"` or `"vercel-kv"` | Working, over HTTPS. Also fine. |
 | `…"store":"memory"` | No store found. Cards will be missed. Add Redis. |
 | `{"ok":false,"error":"bad key"}` | The key in the URL is not `CALL_RELAY_KEY`. |
 | `{"ok":false,"error":"relay not configured"}` | `CALL_RELAY_KEY` did not save. |
@@ -75,11 +82,12 @@ https://www.gohometownland.com/api/call-relay?key=YOUR_KEY&diag=1
 
 - `related` is empty → the store is not connected to **this project**, or the
   deployment predates the connection. Connect it, then redeploy.
-- `related` lists `REDIS_URL` but no `..._REST_...` name → the store speaks only
-  the Redis wire protocol, not the REST API this relay uses. Swap it for an
-  Upstash store, which exposes both.
-- `related` lists a `..._REST_URL` and `..._REST_TOKEN` pair the relay does not
-  recognise → send me the names and I will add them.
+- `related` lists a name the relay does not recognise → send me the names, not
+  the values, and it can be added.
+
+`"store":"memory (redis unreachable)"` means the URL was found but the server
+refused it — usually a password that has been rotated since the variable was
+set.
 
 Environment variables only reach a **new** deployment. After changing anything,
 redeploy from **Deployments → ⋯ → Redeploy**.
