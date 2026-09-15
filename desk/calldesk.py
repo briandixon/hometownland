@@ -51,6 +51,32 @@ LP_FIELDS = (
 # config
 # --------------------------------------------------------------------------
 
+DEFAULT_CONFIG = {
+    "relay_url": "https://www.gohometownland.com/api/call-relay",
+    "relay_key": "",
+    "land_portal_token": "",
+    "port": DEFAULT_PORT,
+}
+
+
+def ensure_config():
+    """Write a starter config.json on first run.
+
+    Asking someone to duplicate and rename a file before the app will start is
+    a step that gets skipped or done wrong -- on Windows especially, where
+    hidden extensions turn config.json into config.json.txt. Writing it here
+    means a first double-click always works.
+    """
+    if CONFIG.exists():
+        return False
+    try:
+        CONFIG.write_text(json.dumps(DEFAULT_CONFIG, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"  could not create config.json: {exc}")
+        return False
+    return True
+
+
 def load_config():
     """Settings come from config.json, falling back to environment variables.
 
@@ -310,12 +336,13 @@ class Line:
         self.current = None       # the call on screen right now
         self.last_call_id = None
         self.store = ""           # which shared store the relay is using
-        self.status = "off" if not cfg["relay_url"] else "starting"
-        self.detail = "" if cfg["relay_url"] else "no relay configured — manual lookup only"
+        self.ready = bool(cfg["relay_url"] and cfg["relay_key"])
+        self.status = "starting" if self.ready else "off"
+        self.detail = "" if self.ready else "no relay key — manual lookup only"
         self.lock = threading.Lock()
 
     def start(self):
-        if not self.cfg["relay_url"]:
+        if not self.ready:
             return
         threading.Thread(target=self._loop, daemon=True).start()
 
@@ -518,9 +545,12 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
+    fresh = ensure_config()
     cfg = load_config()
     print("Hometown Land Call Desk")
     print("-" * 46)
+    if fresh:
+        print(f"  created {CONFIG.name} — open it to switch on live calls")
 
     library = Library().load()
     print(f"  {len(library.leads)} records from {len(library.files)} mailer file(s) "
@@ -537,10 +567,11 @@ def main():
 
     line = Line(cfg, library, parcels)
     line.start()
-    if cfg["relay_url"]:
+    if line.ready:
         print(f"  watching the relay every {POLL_SECONDS:g}s for inbound calls")
     else:
-        print("  no relay configured — the desk works, but calls will not pop on their own")
+        print("  no relay key in config.json — look-ups work, but calls will not")
+        print("    pop on their own. Add \"relay_key\" and start this again.")
 
     Handler.line, Handler.library, Handler.parcels = line, library, parcels
 
