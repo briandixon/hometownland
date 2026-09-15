@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Call Desk — Hometown Land</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&display=swap">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%9E%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-in">
+    <div class="brand"><b>Call Desk</b><span>Hometown Land</span></div>
+    <div class="src"><span class="dot off" id="line-dot"></span><span id="line-text">Starting&hellip;</span></div>
+    <button class="filesbtn" id="filesbtn" type="button">Mailer files <span class="ct" id="rec-count"></span></button>
+    <button class="filesbtn" id="testbtn" type="button">Test a call</button>
+    <button class="themebtn" id="themebtn" type="button">Theme</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="sim">
+    <div class="simfield">
+      <label for="refnum">Look up by reference, name, address or APN</label>
+      <input id="refnum" class="mono" placeholder="V001-150" autocomplete="off">
+    </div>
+    <button class="findbtn" id="findbtn" type="button">Find</button>
+    <div class="chips" id="chips"><span class="lbl">Press <kbd>/</kbd> to search &middot; <kbd>Esc</kbd> to clear</span></div>
+  </div>
+
+  <div class="panel" id="filespanel" hidden>
+    <h3>Mailer files</h3>
+    <p class="lede">Loaded from the <span class="mono">desk/mailers</span> folder. Drop new CSVs in there, then reload. Every file is searched at once, on the primary number and all five alternates; if an owner appears twice, the newest file wins.</p>
+    <div class="filelist" id="filelist"></div>
+    <div class="panelacts">
+      <button class="act" id="reloadbtn" type="button">Reload from folder</button>
+    </div>
+  </div>
+
+  <div class="panel" id="testpanel" hidden>
+    <h3>Test a call</h3>
+    <p class="lede">Pretend this number just rang your Quo line. Nothing is dialled &mdash; this only exercises the lookup so you can check a record before a real call comes in.</p>
+    <div class="panelacts">
+      <input id="testnum" class="mono" placeholder="269-492-8350" autocomplete="off"
+             style="font-size:16px;background:var(--sunk);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:9px 12px;width:190px">
+      <button class="ring" id="testring" type="button">Ring</button>
+    </div>
+  </div>
+
+  <div id="stage"></div>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
