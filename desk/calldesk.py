@@ -645,6 +645,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 limit = 8
             return self._send(200, {"hits": self.library.suggest(q.get("q", [""])[0], limit)})
 
+        if route == "/api/log":
+            try:
+                limit = max(1, min(400, int(q.get("limit", ["60"])[0])))
+            except ValueError:
+                limit = 60
+            return self._send(200, log_entries(
+                q.get("ref", [""])[0], q.get("q", [""])[0], limit))
+
         if route == "/api/reload":
             self.library.load()
             print(f"  reloaded {len(self.library.leads)} records "
@@ -678,36 +686,183 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, self.line.snapshot())
 
         if url.path == "/api/note":
-            return self._send(200, {"saved": save_note(payload)})
+            # Both saving a call and adding to one already saved: the payload
+            # carries an id for the second.
+            result = save_note(payload)
+            return self._send(200 if result.get("saved") else 400, result)
 
         return self._send(404, {"error": "not found"})
 
 
-def save_note(payload):
-    """Append one call outcome to a CSV that opens straight in Excel."""
-    LOGS.mkdir(parents=True, exist_ok=True)
-    path = LOGS / "calls.csv"
-    new = not path.exists()
-    row = {
-        "when": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "number": payload.get("number", ""),
-        "reference": payload.get("ref", ""),
-        "owner": payload.get("owner", ""),
-        "parcel": payload.get("parcel", ""),
-        "offer": payload.get("offer", ""),
-        "outcome": payload.get("outcome", ""),
-        "notes": payload.get("notes", ""),
-    }
+# --------------------------------------------------------------------------
+# the call log
+# --------------------------------------------------------------------------
+
+# One row per call, in a CSV that still opens straight in Excel. `id` is what
+# lets a call be topped up after it was first saved, and `updated` records when
+# that last happened.
+LOG_FIELDS = ["id", "when", "updated", "number", "reference", "owner",
+              "parcel", "offer", "outcome", "notes"]
+LOG_PATH = LOGS / "calls.csv"
+LOG_LOCK = threading.Lock()
+
+
+def _stamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _new_id(taken, when):
+    """A readable id, unique within the log.
+
+    Built from the time of the call, so a row stays recognisable to anyone
+    reading the CSV by hand, with a counter for the rare second call saved
+    inside the same second.
+    """
+    base = re.sub(r"\D", "", when) or time.strftime("%Y%m%d%H%M%S")
+    if base not in taken:
+        return base
+    n = 2
+    while f"{base}-{n}" in taken:
+        n += 1
+    return f"{base}-{n}"
+
+
+def read_log():
+    """Every saved call, oldest first, in the current shape.
+
+    Rows written before the log grew its `id` and `updated` columns are
+    upgraded as they are read: an existing calls.csv keeps working, and the
+    older rows can be added to like any other.
+    """
+    if not LOG_PATH.exists():
+        return [], False
     try:
-        with path.open("a", encoding="utf-8", newline="") as fh:
-            writer = csv.DictWriter(fh, fieldnames=list(row))
-            if new:
-                writer.writeheader()
-            writer.writerow(row)
+        with LOG_PATH.open(encoding="utf-8-sig", newline="") as fh:
+            raw = list(csv.DictReader(fh))
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        print(f"  could not read the call log: {exc}")
+        return [], False
+
+    rows, taken, upgraded = [], set(), False
+    for source in raw:
+        row = {key: str(source.get(key, "") or "").strip() for key in LOG_FIELDS}
+        if not row["id"]:
+            row["id"] = _new_id(taken, row["when"])
+            upgraded = True
+        taken.add(row["id"])
+        rows.append(row)
+    return rows, upgraded
+
+
+def write_log(rows):
+    """Replace the log in one go, through a temporary file.
+
+    The whole log is rewritten rather than appended to because a detail added
+    later edits a row that is already there. Writing beside the file and
+    renaming means a half-written log never replaces a good one.
+    """
+    LOGS.mkdir(parents=True, exist_ok=True)
+    tmp = LOG_PATH.with_name(LOG_PATH.name + ".tmp")
+    try:
+        with tmp.open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=LOG_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        tmp.replace(LOG_PATH)
     except OSError as exc:
-        print(f"  could not write call log: {exc}")
+        print(f"  could not write the call log: {exc}")
         return False
     return True
+
+
+def _load_log():
+    """The log, with any upgraded rows written back. Call holding LOG_LOCK.
+
+    An id invented while reading has to survive to the next request, or the
+    button that adds a detail would be pointing at a row that no longer
+    answers to that name.
+    """
+    rows, upgraded = read_log()
+    if upgraded:
+        write_log(rows)
+    return rows
+
+
+def save_note(payload):
+    """Save a call, or add more detail to one already in the log.
+
+    Without an `id` this writes a new row. With one it tops that row up: the
+    new text is appended under its own timestamp instead of replacing what was
+    written on the call, so a record reads as a running account rather than
+    whatever was typed last. The outcome is the one thing that is replaced --
+    a caller who was Thinking on Monday and Accepted on Friday has one
+    outcome, not two.
+    """
+    text = str(payload.get("notes", "") or "").strip()
+    outcome = str(payload.get("outcome", "") or "").strip()
+    entry_id = str(payload.get("id", "") or "").strip()
+
+    with LOG_LOCK:
+        rows = _load_log()
+
+        if entry_id:
+            for row in rows:
+                if row["id"] != entry_id:
+                    continue
+                if not text and not outcome:
+                    return {"saved": False, "error": "nothing to add"}
+                if text:
+                    row["notes"] = (row["notes"] + "\n" if row["notes"] else "") + \
+                        f"[{_stamp()}] {text}"
+                if outcome:
+                    row["outcome"] = outcome
+                row["updated"] = _stamp()
+                if not write_log(rows):
+                    return {"saved": False, "error": "could not write the log"}
+                print(f"  call log: added to {entry_id}")
+                return {"saved": True, "entry": row}
+            return {"saved": False, "error": "that call is no longer in the log"}
+
+        row = {
+            "id": _new_id({r["id"] for r in rows}, _stamp()),
+            "when": _stamp(),
+            "updated": "",
+            "number": ten_digits(payload.get("number", "")),
+            "reference": str(payload.get("ref", "") or "").strip(),
+            "owner": str(payload.get("owner", "") or "").strip(),
+            "parcel": str(payload.get("parcel", "") or "").strip(),
+            "offer": str(payload.get("offer", "") if payload.get("offer") is not None else ""),
+            "outcome": outcome,
+            "notes": text,
+        }
+        rows.append(row)
+        if not write_log(rows):
+            return {"saved": False, "error": "could not write the log"}
+        print(f"  call log: saved {row['id']}"
+              + (f" — {outcome}" if outcome else ""))
+        return {"saved": True, "entry": row}
+
+
+def log_entries(ref="", query="", limit=60):
+    """The log newest first, optionally narrowed to one record or a search."""
+    with LOG_LOCK:
+        rows = _load_log()
+
+    ref = str(ref or "").upper().replace(" ", "")
+    if ref:
+        rows = [r for r in rows if r["reference"].upper().replace(" ", "") == ref]
+
+    query = str(query or "").strip().lower()
+    if query:
+        wanted = re.sub(r"\D", "", query)
+        rows = [r for r in rows if query in " ".join(
+            [r["when"], r["owner"], r["reference"], r["parcel"], r["outcome"],
+             r["notes"], r["number"]]).lower()
+            or (len(wanted) >= 3 and wanted in r["number"])]
+
+    total = len(rows)
+    rows.reverse()
+    return {"entries": rows[:limit], "total": total}
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -731,6 +886,10 @@ def main():
         print(f"    {f['name']}: {f['records']} records, {f['reachable']} reachable{note}")
     if not library.files:
         print("    (none yet — drop your mailer CSVs in that folder and restart)")
+
+    saved, _ = read_log()
+    if saved:
+        print(f"  {len(saved)} calls already in {LOG_PATH}")
 
     parcels = Parcels(cfg["land_portal_token"])
     if not cfg["land_portal_token"]:

@@ -12,6 +12,20 @@
   var mode = "idle";       // idle | call | manual | picker
   var timer = null;
 
+  /* What is true about the card on screen but not in the markup: how far the
+     call has got, how long it has run, the notes being typed, and the log row
+     they belong to once saved. The card is re-rendered whenever Land Portal
+     answers, so this has to live outside it -- otherwise enrichment landing
+     mid-sentence would wipe the note. */
+  var cardState = null;
+
+  var OUTCOMES = ["Accepted", "Countered", "Thinking", "Not selling",
+                  "Wrong number", "Remove from list"];
+  var OUTCOME_TONE = {
+    "Accepted": "good", "Countered": "live", "Thinking": "live",
+    "Not selling": "alert", "Remove from list": "alert"
+  };
+
   /* ---------- helpers ---------- */
 
   function esc(s) {
@@ -55,8 +69,12 @@
           body: JSON.stringify(body) }
       : {};
     return fetch(path, opts).then(function (r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
+      return r.json().catch(function () { return {}; }).then(function (data) {
+        // The desk says why it refused -- "that call is no longer in the log"
+        // is worth showing instead of a status code.
+        if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+        return data;
+      });
     });
   }
 
@@ -183,7 +201,7 @@
           '<span class="strip-via">looked up by hand · ' + esc(lead.source || "") + "</span>" +
           '<span class="strip-acts">' +
             (best ? '<a class="act pri" href="tel:+1' + esc(best.num) + '">Call ' + esc(fmtPhone(best.num)) + "</a>" : "") +
-            '<button class="act end" id="hangup" type="button">Clear</button>' +
+            '<button class="act" id="clearbtn" type="button">Clear</button>' +
           "</span></div>";
 
     var terr = [];
@@ -282,46 +300,115 @@
 
     "</div>" +
 
-    '<div class="notes">' +
-      '<div style="flex:1;min-width:240px;display:flex;flex-direction:column;gap:5px">' +
-        '<label for="callnotes" style="font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-faint);font-weight:600">Call notes</label>' +
+    notesBlock();
+  }
+
+  /* The same write-up block under a card and under an unrecognised number:
+     a call worth taking is a call worth logging either way. */
+  function notesBlock(lede) {
+    return '<div class="notes">' +
+      '<div class="notefield">' +
+        '<label for="callnotes">Call notes</label>' +
         '<textarea id="callnotes" placeholder="Counter price, timeline, heirs, access…"></textarea>' +
+        '<div class="notehint" id="notehint">' +
+          esc(lede || "Write it up while it is fresh — hanging up leaves the card here.") +
+        "</div>" +
       "</div>" +
       '<div class="disp"><span class="cap">Outcome</span><div class="btns" id="dispbtns">' +
-        '<button class="dbtn" type="button">Accepted</button>' +
-        '<button class="dbtn" type="button">Countered</button>' +
-        '<button class="dbtn" type="button">Thinking</button>' +
-        '<button class="dbtn" type="button">Not selling</button>' +
-        '<button class="dbtn" type="button">Wrong number</button>' +
-        '<button class="dbtn" type="button">Remove from list</button>' +
+        OUTCOMES.map(function (o) {
+          return '<button class="dbtn" type="button">' + esc(o) + "</button>";
+        }).join("") +
       "</div></div>" +
       '<button class="act pri" id="savenote" type="button">Save to log</button>' +
-    "</div>";
+    "</div>" +
+    '<div class="history" id="history"></div>';
   }
 
   /* ---------- screens ---------- */
 
-  function showCard(lead, phone, parcel, kind, number) {
-    stage.innerHTML = card(lead, phone, parcel, kind, number);
-    wireCard(lead, number);
+  function cardKey(lead, kind, number) {
+    return kind + "|" + (number || "") + "|" + ((lead && lead.ref) || "");
   }
 
+  function showCard(lead, phone, parcel, kind, number) {
+    var key = cardKey(lead, kind, number);
+    if (cardState && cardState.key === key) readCard();   // same call, redrawn
+    else cardState = {
+      key: key, logId: null, secs: 0, notes: "", outcome: "",
+      phase: kind === "call" ? "ringing" : "open"
+    };
+    stage.innerHTML = card(lead, phone, parcel, kind, number);
+    wireCard(lead, number);
+    restoreCard();
+    loadHistory(lead.ref);
+  }
+
+  /* Pull what has been typed out of the card before its markup is thrown away. */
+  function readCard() {
+    var notes = document.getElementById("callnotes");
+    if (notes) cardState.notes = notes.value;
+    var disp = document.getElementById("dispbtns");
+    if (disp) {
+      var on = disp.querySelector(".dbtn.on");
+      cardState.outcome = on ? on.textContent : "";
+    }
+  }
+
+  function restoreCard() {
+    var notes = document.getElementById("callnotes");
+    if (notes) notes.value = cardState.notes || "";
+    var disp = document.getElementById("dispbtns");
+    if (disp && cardState.outcome) {
+      Array.prototype.forEach.call(disp.children, function (b) {
+        b.classList.toggle("on", b.textContent === cardState.outcome);
+      });
+    }
+    if (cardState.logId) {
+      var save = document.getElementById("savenote");
+      if (save) save.textContent = "Add to log";
+      hint("Already in the log. Anything else you learn is added to the same entry.", "saved");
+    }
+    paintPhase();
+  }
+
+  function hint(text, tone) {
+    var el = document.getElementById("notehint");
+    if (!el) return;
+    el.textContent = text;
+    el.className = "notehint" + (tone ? " " + tone : "");
+  }
+
+  var STRANGER = { ref: "", owner: "", greet: "", phones: [], offer: null,
+                   pAddr: "", pCity: "", pState: "" };
+
   function showNoMatch(number) {
+    var key = cardKey(STRANGER, "call", number);
+    if (cardState && cardState.key === key) readCard();
+    else cardState = { key: key, logId: null, secs: 0, notes: "", outcome: "",
+                       phase: "ringing" };
+
     stage.innerHTML =
-      '<div class="strip"><span class="lamp"></span>' +
-        '<span class="strip-state">Incoming call</span>' +
+      '<div class="strip" id="strip"><span class="lamp"></span>' +
+        '<span class="strip-state" id="stripstate">Incoming call</span>' +
         '<span class="strip-num">' + esc(fmtPhone(number)) + "</span>" +
         '<span class="strip-via">via Quo · (866) 520-9045</span>' +
-        '<span class="strip-acts"><button class="act end" id="hangup" type="button">Clear</button></span></div>' +
+        '<span class="strip-timer" id="timer">00:00</span>' +
+        '<span class="strip-acts">' +
+          '<button class="act pri" id="answer" type="button">Answer</button>' +
+          '<button class="act end" id="hangup" type="button">Hang up</button>' +
+        "</span></div>" +
       '<div class="nomatch"><h3>No mailer match</h3>' +
       "<p><span class=\"mono\">" + esc(fmtPhone(number)) + "</span> is not in any loaded mailer file, " +
       "on the primary number or any alternate. Ask for the reference on their letter.</p>" +
       '<form class="reffind" id="nmref">' +
         '<input id="nmrefinput" placeholder="Reference, name, address or APN" aria-label="Look up a record" autocomplete="off">' +
-        '<button class="act pri" type="submit">Look up</button></form></div>';
+        '<button class="act pri" type="submit">Look up</button></form></div>' +
+      // No record to attach it to, so the log keeps the number and the note.
+      notesBlock("Nobody you mailed — the log still keeps the number and whatever they told you.");
+
     wireInlineSearch();
-    var hangup = document.getElementById("hangup");
-    if (hangup) hangup.addEventListener("click", clearCall);
+    wireCard(STRANGER, number);
+    restoreCard();
   }
 
   function showPicker(hits, q) {
@@ -352,6 +439,8 @@
 
   function showIdle(state) {
     mode = "idle";
+    cardState = null;
+    if (timer) { clearInterval(timer); timer = null; }
     var files = (state && state.files) || [];
     var records = (state && state.records) || 0;
     var reachable = (state && state.reachable) || 0;
@@ -386,36 +475,91 @@
 
   /* ---------- card behaviour ---------- */
 
-  function clearCall() {
+  function clearCall(force) {
+    // Clearing is the one way a written-but-unsaved note is lost, so it asks.
+    var notes = document.getElementById("callnotes");
+    if (!force && notes && notes.value.trim() &&
+        !window.confirm("Clear this call? The notes have not been saved to the log.")) return;
+    if (timer) { clearInterval(timer); timer = null; }
+    cardState = null;
     api("/api/clear", {}).then(function (s) { seq = null; showIdle(s); }).catch(function () {});
   }
 
-  function wireCard(lead, number) {
+  /* ---------- the call strip ---------- */
+
+  function paintTimer() {
+    var el = document.getElementById("timer");
+    if (el && cardState) {
+      el.textContent = String(Math.floor(cardState.secs / 60)).padStart(2, "0") + ":" +
+        String(cardState.secs % 60).padStart(2, "0");
+    }
+  }
+
+  function startTimer() {
+    if (timer) clearInterval(timer);
+    paintTimer();
+    timer = setInterval(function () {
+      if (!cardState) return;
+      cardState.secs++;
+      paintTimer();
+    }, 1000);
+  }
+
+  /* Draw the strip for whichever part of the call we are in. Also runs after a
+     redraw, so answering a call and then having Land Portal answer does not
+     put the card back to ringing. */
+  function paintPhase() {
     var strip = document.getElementById("strip");
+    if (!strip || !cardState) return;
     var state = document.getElementById("stripstate");
-    var timerEl = document.getElementById("timer");
+    var acts = strip.querySelector(".strip-acts");
+
+    if (cardState.phase === "live") {
+      strip.classList.add("answered");
+      if (state) state.textContent = "On the call";
+      var answer = document.getElementById("answer");
+      if (answer) answer.remove();
+      startTimer();
+    } else if (cardState.phase === "wrap") {
+      strip.classList.remove("answered");
+      strip.classList.add("wrapup");
+      if (state) state.textContent = "Call ended — write it up";
+      if (acts) {
+        acts.innerHTML = '<button class="act" id="clearbtn" type="button">Clear</button>';
+        acts.querySelector("#clearbtn").addEventListener("click", function () { clearCall(); });
+      }
+      paintTimer();
+    }
+  }
+
+  /* Hanging up used to wipe the screen, which meant writing the call up was
+     something you had to remember to do first. The card stays put instead. */
+  function endCall() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (!cardState) return;
+    cardState.phase = "wrap";
+    paintPhase();
+    var notes = document.getElementById("callnotes");
+    if (notes) {
+      notes.focus();
+      if (!cardState.logId) {
+        hint("They have hung up — the card waits here until you clear it.", "");
+      }
+    }
+  }
+
+  function wireCard(lead, number) {
     var answer = document.getElementById("answer");
     var hangup = document.getElementById("hangup");
-    var secs = 0;
+    var clear = document.getElementById("clearbtn");
 
     if (answer) answer.addEventListener("click", function () {
-      strip.classList.add("answered");
-      state.textContent = "On the call";
-      answer.remove();
-      if (timer) clearInterval(timer);
-      timer = setInterval(function () {
-        secs++;
-        if (timerEl) {
-          timerEl.textContent = String(Math.floor(secs / 60)).padStart(2, "0") + ":" +
-            String(secs % 60).padStart(2, "0");
-        }
-      }, 1000);
+      cardState.phase = "live";
+      paintPhase();
     });
 
-    if (hangup) hangup.addEventListener("click", function () {
-      if (timer) clearInterval(timer);
-      clearCall();
-    });
+    if (hangup) hangup.addEventListener("click", endCall);
+    if (clear) clear.addEventListener("click", function () { clearCall(); });
 
     var disp = document.getElementById("dispbtns");
     if (disp) disp.addEventListener("click", function (e) {
@@ -426,24 +570,180 @@
       if (!was) b.classList.add("on");
     });
 
+    /* The first save writes the row; every save after it adds to that same
+       row, so the deed that turns up on Thursday lands under Tuesday's call
+       instead of starting a second one. */
     var save = document.getElementById("savenote");
     if (save) save.addEventListener("click", function () {
+      var notes = document.getElementById("callnotes");
+      var text = notes ? notes.value.trim() : "";
       var chosen = disp && disp.querySelector(".dbtn.on");
+      var outcome = chosen ? chosen.textContent : "";
+
+      if (!text && !outcome) {
+        hint(cardState.logId ? "Nothing new to add yet."
+                             : "Write a note or pick an outcome first.", "failed");
+        if (notes) notes.focus();
+        return;
+      }
+
+      var adding = !!cardState.logId;
+      save.disabled = true;
       api("/api/note", {
-        number: number || (lead.phones[0] && lead.phones[0].num) || "",
+        id: cardState.logId || "",
+        number: number || ((lead.phones || [])[0] || {}).num || "",
         ref: lead.ref,
         owner: lead.owner,
         parcel: [lead.pAddr, lead.pCity, lead.pState].filter(Boolean).join(", "),
         offer: lead.offer,
-        outcome: chosen ? chosen.textContent : "",
-        notes: (document.getElementById("callnotes") || {}).value || ""
-      }).then(function () {
-        save.textContent = "Saved";
-        setTimeout(function () { save.textContent = "Save to log"; }, 1600);
-      }).catch(function () {
-        save.textContent = "Could not save";
+        outcome: outcome,
+        notes: text
+      }).then(function (r) {
+        save.disabled = false;
+        save.textContent = "Add to log";
+        cardState.logId = r.entry.id;
+        cardState.notes = "";
+        if (notes) notes.value = "";
+        hint((adding ? "Added at " : "Saved to the log at ") +
+             shortTime(r.entry.updated || r.entry.when) +
+             (lead.ref ? " — it is below, and anything else goes in the same entry."
+                       : " — it is under Call log, and anything else goes in the same entry."),
+             "saved");
+        loadHistory(lead.ref);
+        loadLogCount();
+      }).catch(function (err) {
+        save.disabled = false;
+        hint(err.message || "Could not write the log.", "failed");
       });
     });
+  }
+
+  /* ---------- the log ---------- */
+
+  function shortDate(stamp) {
+    return String(stamp || "").replace(/:\d{2}$/, "");
+  }
+
+  function shortTime(stamp) {
+    var m = /\d{4}-\d{2}-\d{2} (\d{2}:\d{2})/.exec(String(stamp || ""));
+    return m ? m[1] : String(stamp || "");
+  }
+
+  /* A note keeps the time it was written in front of it, so an entry reads
+     top to bottom as the call and then everything that came in afterwards. */
+  function noteLine(line, i, when) {
+    var m = /^\[([^\]]+)\]\s*([\s\S]*)$/.exec(line);
+    if (m) return '<p><span class="at">' + esc(shortTime(m[1])) + "</span>" + esc(m[2]) + "</p>";
+    return "<p>" + (i === 0 ? '<span class="at">' + esc(shortTime(when)) + "</span>" : "") +
+      esc(line) + "</p>";
+  }
+
+  function entryHtml(e) {
+    var lines = String(e.notes || "").split("\n").filter(function (l) { return l.trim(); });
+    var offer = e.offer === "" || e.offer === undefined ? null : Number(e.offer);
+    var meta = [e.parcel, offer ? "offered " + usd0(offer) : ""].filter(Boolean).join(" · ");
+
+    return '<div class="lg-entry" data-id="' + esc(e.id) + '">' +
+      '<div class="lg-head">' +
+        '<span class="lg-when">' + esc(e.when) + "</span>" +
+        (e.outcome ? '<span class="badge ' + (OUTCOME_TONE[e.outcome] || "") + '">' +
+          esc(e.outcome) + "</span>" : "") +
+        '<span class="lg-who">' + esc(titleCase(e.owner) || "—") + "</span>" +
+        (e.reference ? '<span class="lg-ref">' + esc(e.reference) + "</span>" : "") +
+        (e.number ? '<span class="lg-num">' + esc(fmtPhone(e.number)) + "</span>" : "") +
+        '<button class="act lg-add" type="button">Add detail</button>' +
+      "</div>" +
+      (meta ? '<div class="lg-parcel">' + esc(meta) + "</div>" : "") +
+      (lines.length
+        ? '<div class="lg-notes">' + lines.map(function (l, i) {
+            return noteLine(l, i, e.when);
+          }).join("") + "</div>"
+        : '<div class="lg-notes empty">No notes on this one.</div>') +
+      (e.updated ? '<div class="lg-upd">Last added ' + esc(shortDate(e.updated)) + "</div>" : "") +
+      '<form class="lg-more" hidden>' +
+        '<textarea placeholder="What came up since the call? Filed under its own timestamp."></textarea>' +
+        '<div class="lg-moreacts">' +
+          '<button class="act pri" type="submit">Add to log</button>' +
+          '<span class="msg"></span>' +
+        "</div>" +
+      "</form>" +
+    "</div>";
+  }
+
+  /* One click handler for a list of entries, wherever it is drawn: under the
+     card for this record, or in the Call log panel for all of them. */
+  function wireLogList(root, reload) {
+    root.reloadLog = reload;
+    if (root.logWired) return;
+    root.logWired = true;
+
+    root.addEventListener("click", function (e) {
+      var add = e.target.closest(".lg-add");
+      if (!add) return;
+      var form = add.closest(".lg-entry").querySelector(".lg-more");
+      form.hidden = !form.hidden;
+      add.textContent = form.hidden ? "Add detail" : "Cancel";
+      if (!form.hidden) form.querySelector("textarea").focus();
+    });
+
+    root.addEventListener("submit", function (e) {
+      var form = e.target.closest(".lg-more");
+      if (!form) return;
+      e.preventDefault();
+      var entry = form.closest(".lg-entry");
+      var box = form.querySelector("textarea");
+      var msg = form.querySelector(".msg");
+      var text = box.value.trim();
+      if (!text) { msg.textContent = "Write something first."; box.focus(); return; }
+      var btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      msg.textContent = "";
+      api("/api/note", { id: entry.dataset.id, notes: text })
+        .then(function () {
+          // Close the box before redrawing: a filled one holds the redraw off.
+          box.value = "";
+          form.hidden = true;
+          var add = entry.querySelector(".lg-add");
+          if (add) add.textContent = "Add detail";
+          root.reloadLog();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          msg.textContent = err.message || "Could not write the log.";
+        });
+    });
+  }
+
+  function loadHistory(ref) {
+    var box = document.getElementById("history");
+    if (!box || !ref) return;
+    if (openDetail(box)) return;
+    api("/api/log?limit=6&ref=" + encodeURIComponent(ref)).then(function (r) {
+      box = document.getElementById("history");
+      if (!box) return;                       // the card moved on while we asked
+      var rows = r.entries || [];
+      if (!rows.length) { box.innerHTML = ""; return; }
+      box.innerHTML =
+        '<div class="hcap">This record in the call log' +
+          '<span class="n">' + r.total + (r.total === 1 ? " call" : " calls") +
+          (rows.length < r.total ? ", latest " + rows.length : "") + "</span></div>" +
+        '<div class="loglist">' + rows.map(entryHtml).join("") + "</div>";
+      wireLogList(box, function () { loadHistory(ref); });
+    }).catch(function () {});
+  }
+
+  /* True while an Add detail box is open with something in it. */
+  function openDetail(root) {
+    return Array.prototype.some.call(root.querySelectorAll(".lg-more"), function (f) {
+      return !f.hidden && f.querySelector("textarea").value.trim();
+    });
+  }
+
+  function loadLogCount() {
+    api("/api/log?limit=1").then(function (r) {
+      document.getElementById("log-count").textContent =
+        r.total ? r.total + (r.total === 1 ? " call" : " calls") : "empty";
+    }).catch(function () {});
   }
 
   /* ---------- lookup ---------- */
@@ -542,6 +842,38 @@
 
   var filesPanel = document.getElementById("filespanel");
   var testPanel = document.getElementById("testpanel");
+  var logPanel = document.getElementById("logpanel");
+  var logList = document.getElementById("loglist");
+  var logFilter = document.getElementById("logfilter");
+  var logDebounce = null;
+
+  function drawLog() {
+    var query = logFilter.value.trim();
+    return api("/api/log?limit=120&q=" + encodeURIComponent(query)).then(function (r) {
+      var rows = r.entries || [];
+      logList.innerHTML = rows.length
+        ? rows.map(entryHtml).join("")
+        : '<div class="lg-empty">' + (query
+            ? "Nothing in the log matches <b>" + esc(query) + "</b>."
+            : "No calls saved yet. Hang up on the first one, write down what happened, " +
+              "and it lands here.") + "</div>";
+      loadLogCount();
+    }).catch(function () {
+      logList.innerHTML = '<div class="lg-empty">Could not read the log.</div>';
+    });
+  }
+
+  wireLogList(logList, drawLog);
+  document.getElementById("logbtn").addEventListener("click", function () {
+    logPanel.hidden = !logPanel.hidden;
+    if (!logPanel.hidden) drawLog();
+  });
+  document.getElementById("logreload").addEventListener("click", drawLog);
+  logFilter.addEventListener("input", function () {
+    clearTimeout(logDebounce);
+    logDebounce = setTimeout(drawLog, 140);
+  });
+
   document.getElementById("filesbtn").addEventListener("click", function () {
     filesPanel.hidden = !filesPanel.hidden;
   });
@@ -677,7 +1009,11 @@
       box.focus();
       box.select();
     } else if (e.key === "Escape") {
-      if (typing) e.target.blur();
+      if (typing) {
+        e.target.blur();
+        // Escape out of a note box means "stop typing", never "throw it away".
+        if (e.target.id === "callnotes" || e.target.closest(".lg-more")) return;
+      }
       box.value = "";
       closeSuggest();
       clearCall();
@@ -685,5 +1021,6 @@
   });
 
   tick();
+  loadLogCount();
   setInterval(tick, POLL_MS);
 })();

@@ -160,7 +160,17 @@ after an error so you can read what happened.
 - **A call comes in** → the card appears on its own.
 - **No card?** Ask for the reference on their letter (`V001-150`) and type it in
   the search box. It also matches owner name, parcel address and APN.
-- **`/`** jumps to the search box, **`Esc`** clears the screen.
+- **They hang up** → press **Hang up** and the card *stays where it is*, with the
+  cursor already in the notes box. Write down what was said, pick an outcome,
+  and press **Save to log**. Only **Clear** puts the card away, and it asks first
+  if there is a note you have not saved.
+- **Something turns up afterwards** → the deed arrives, the lawyer calls back.
+  The call is still on screen under **This record in the call log**, and every
+  saved call is under **Call log** in the header. Open one, press **Add detail**,
+  and what you write is filed under its own timestamp beneath the original note.
+  Nothing you wrote during the call is overwritten.
+- **`/`** jumps to the search box, **`Esc`** clears the screen — except in a
+  notes box, where it just stops typing.
 - **Test a call** in the header lets you rehearse a record without anyone
   dialling.
 - **Mailer files → Reload from folder** picks up newly added CSVs without a
@@ -170,10 +180,14 @@ after an error so you can read what happened.
 
 | | |
 | --- | --- |
-| `desk/logs/calls.csv` | One row per saved call: who, what you offered, the outcome, your notes. Opens in Excel. |
+| `desk/logs/calls.csv` | One row per saved call: who, what you offered, the outcome, and the notes — the ones written on the call and everything added since, each with the time it was written. Opens in Excel. |
 | `desk/cache/parcels.json` | Land Portal responses, kept so a repeat caller never costs a second request against your quota. |
 
-Delete the cache file if you want fresh parcel data.
+Delete the cache file if you want fresh parcel data. Leave `calls.csv` alone:
+adding a detail to a call rewrites that file, so the desk needs the whole thing.
+An older `calls.csv` written before the log could be added to still opens
+normally — the first time the desk reads it, the two new columns are filled in
+and those calls can be topped up like any other.
 
 ---
 
