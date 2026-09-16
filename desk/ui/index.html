@@ -7,7 +7,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&display=swap">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%9E%3C/text%3E%3C/svg%3E">
+<!-- A green handset, drawn rather than an emoji: the tab is how you find the
+     desk among a morning's worth of windows, and green reads as the line
+     being watched. #2A6B44 is the gohometownland green. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%232A6B44%22/%3E%3Cpath d=%22M11.6 6.5c.55 0 1.05.33 1.27.84l1.5 3.5c.2.48.09 1.04-.28 1.4l-1.5 1.46c1.02 2.05 2.7 3.72 4.75 4.74l1.46-1.5c.36-.37.92-.48 1.4-.28l3.5 1.5c.51.22.84.72.84 1.27v3.24c0 .95-.77 1.72-1.72 1.72C13.4 24.4 7.6 18.6 7.6 8.22c0-.95.77-1.72 1.72-1.72h2.28z%22 fill=%22%23fff%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -17,6 +20,7 @@
     <div class="brand"><b>Call Desk</b><span>Hometown Land</span></div>
     <div class="src"><span class="dot off" id="line-dot"></span><span id="line-text">Starting&hellip;</span></div>
     <button class="filesbtn" id="filesbtn" type="button">Mailer files <span class="ct" id="rec-count"></span></button>
+    <button class="filesbtn" id="logbtn" type="button">Call log <span class="ct" id="log-count"></span></button>
     <button class="filesbtn" id="testbtn" type="button">Test a call</button>
     <button class="themebtn" id="themebtn" type="button">Theme</button>
   </div>
@@ -43,6 +47,16 @@
     <div class="panelacts">
       <button class="act" id="reloadbtn" type="button">Reload from folder</button>
     </div>
+  </div>
+
+  <div class="panel" id="logpanel" hidden>
+    <h3>Call log</h3>
+    <p class="lede">Every call you saved, newest first, read back out of <span class="mono">desk/logs/calls.csv</span>. Open one to add more detail &mdash; the deed came back, the lawyer called &mdash; and it is filed under its own timestamp, so nothing you wrote during the call is overwritten.</p>
+    <div class="panelacts">
+      <input id="logfilter" class="logfilter" placeholder="Filter by name, reference, number or note" autocomplete="off" aria-label="Filter the call log">
+      <button class="act" id="logreload" type="button">Reload</button>
+    </div>
+    <div class="loglist" id="loglist"></div>
   </div>
 
   <div class="panel" id="testpanel" hidden>
