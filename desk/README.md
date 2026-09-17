@@ -155,6 +155,29 @@ The black window is also the log: it prints a line for every call it sees,
 which is the first place to look when something seems wrong. It stays open
 after an error so you can read what happened.
 
+Everything it prints also goes to **`desk/logs/calldesk.log`**, with timestamps
+and full detail — including faults in the browser tab, which otherwise leave no
+trace at all. That file is what to send when something went wrong an hour ago
+and the window has scrolled. It holds references, phone numbers and how long a
+note was, never the note itself or an owner's details, and it is ignored by git
+like the rest of `desk/logs/`. It rotates at 2 MB and keeps three older files.
+
+For a noisy run that shows every request in the window too, start it with
+`py calldesk.py --debug`, or put `"debug": true` in `config.json`. The file
+keeps that detail either way.
+
+### After pulling an update
+
+**Restart the desk.** Close the black window and double-click the launcher
+again.
+
+The desk reads its screen off disk every time the page loads, but the program
+itself is whatever was running when you opened the window. Update without
+restarting and you get a new screen talking to the old program, which fails in
+ways that look like nothing in this file. It now notices: a red bar appears
+across the top saying the program is still the old one, and saving a note says
+the same thing instead of something about `id`. Restart and both go away.
+
 ### Day to day
 
 - **A call comes in** → the card appears on its own.
@@ -182,6 +205,7 @@ after an error so you can read what happened.
 | --- | --- |
 | `desk/logs/calls.csv` | One row per saved call: who, what you offered, the outcome, and the notes — the ones written on the call and everything added since, each with the time it was written. Opens in Excel. |
 | `desk/cache/parcels.json` | Land Portal responses, kept so a repeat caller never costs a second request against your quota. |
+| `desk/logs/calldesk.log` | What the desk did, and anything that went wrong, with timestamps. Troubleshooting only — no note text and no owner details. |
 
 Delete the cache file if you want fresh parcel data. Leave `calls.csv` alone:
 adding a detail to a call rewrites that file, so the desk needs the whole thing.
@@ -212,6 +236,16 @@ Open the relay URL in a browser to check.
 **A call rings but no card appears** — check the terminal window. It prints a
 line for every call it sees. If nothing prints, the event is not reaching the
 relay; check the webhook in Quo.
+
+**A red bar says the program is from before the last update** — exactly that:
+close the black window and start it again. Nothing is lost; a note in the box
+stays in the box.
+
+**"The desk did not confirm the save"** — the note was not written, and it is
+still in the box so you can try again. `desk/logs/calldesk.log` says why.
+
+**Anything else odd** — open `desk/logs/calldesk.log` and look at the end. Every
+request, every saved call and every error is there with the time it happened.
 
 **"No mailer match" for someone you definitely mailed** — they are calling from
 a number that was not in the export, or that campaign's CSV is not in

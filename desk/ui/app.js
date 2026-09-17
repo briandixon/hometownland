@@ -12,6 +12,64 @@
   var mode = "idle";       // idle | call | manual | picker
   var timer = null;
 
+  /* Must match DESK_VERSION in calldesk.py.
+
+     The desk reads this file off disk on every request, but the Python it is
+     running was loaded when the window was opened. Pulling an update without
+     restarting therefore runs this page against the server it replaced, and
+     the failure that produces is baffling: a reply arrives, looks fine, and
+     is missing a field this page is certain is there. Rather than let that
+     surface as a stray TypeError, the two say their version to each other. */
+  var UI_VERSION = "2026.09.17";
+  var stale = false;       // true once the server has answered with another one
+
+  /* ---------- telling the desk what went wrong here ----------
+
+     Most of this desk runs in the tab, which was the one place the log could
+     not see: a fault here lived in a devtools console nobody had open. These
+     go to the same file as everything the server does. Never let reporting a
+     fault raise one -- it would report itself forever. */
+  var REPEAT_MS = 60000;
+  var reported = Object.create(null);   // bare, so "constructor" is not a hit
+
+  function report(level, message, detail) {
+    try {
+      /* The poll runs every second, so a desk that has stopped answering
+         would write a line a second until someone noticed. The same thing is
+         said once a minute instead: often enough to show it is still
+         happening, rarely enough to leave the rest of the morning readable. */
+      var key = level + "|" + message;
+      var now = Date.now();
+      if (reported[key] && now - reported[key] < REPEAT_MS) return;
+      reported[key] = now;
+      fetch("/api/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          level: level,
+          message: String(message).slice(0, 1000),
+          detail: detail
+        })
+      }).catch(function () {});
+    } catch (e) { /* nothing left to report it to */ }
+  }
+
+  window.addEventListener("error", function (e) {
+    report("error", (e.message || "script error"), {
+      at: (e.filename || "") + ":" + (e.lineno || 0) + ":" + (e.colno || 0),
+      stack: e.error && e.error.stack ? String(e.error.stack).slice(0, 1200) : "",
+      mode: mode, ui: UI_VERSION
+    });
+  });
+
+  window.addEventListener("unhandledrejection", function (e) {
+    var why = e.reason;
+    report("error", "unhandled rejection: " + ((why && why.message) || why), {
+      stack: why && why.stack ? String(why.stack).slice(0, 1200) : "",
+      mode: mode, ui: UI_VERSION
+    });
+  });
+
   /* What is true about the card on screen but not in the markup: how far the
      call has got, how long it has run, the notes being typed, and the log row
      they belong to once saved. The card is re-rendered whenever Land Portal
@@ -68,14 +126,37 @@
       ? { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body) }
       : {};
-    return fetch(path, opts).then(function (r) {
+    return fetch(path, opts).catch(function (err) {
+      // Nothing answered at all -- the desk is stopped, or the port moved.
+      // Caught here rather than around the whole chain, so a fault in our own
+      // handling below is not mistaken for the network.
+      report("warning", "could not reach the desk: " + path,
+             { why: String(err && err.message || err), mode: mode });
+      throw err;
+    }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (data) {
         // The desk says why it refused -- "that call is no longer in the log"
         // is worth showing instead of a status code.
-        if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+        if (!r.ok) {
+          // /api/client-log is excluded: a failure reporting a failure would
+          // report itself.
+          if (path !== "/api/client-log") {
+            report(r.status >= 500 ? "error" : "warning",
+                   "request failed: " + path,
+                   { status: r.status, error: data.error || "", mode: mode });
+          }
+          throw new Error(data.error || "HTTP " + r.status);
+        }
         return data;
       });
     });
+  }
+
+  /* The desk is older than this page. Every reply is then suspect, so say so
+     once, plainly, in the words of the thing that fixes it. */
+  function staleMessage() {
+    return "The Call Desk program is still running the version from before " +
+      "the last update. Close the black window and start it again.";
   }
 
   var stage = document.getElementById("stage");
@@ -600,12 +681,30 @@
         notes: text
       }).then(function (r) {
         save.disabled = false;
+
+        /* A reply without an entry means the desk did not write what this
+           page thinks it wrote, so the note must stay in the box: it is the
+           only copy. Reading r.entry.id regardless is how this used to fail,
+           as "Cannot read properties of undefined (reading 'id')" in the hint
+           line -- which named the one thing nobody needed to know, and lost
+           the note behind it if the save was retried. */
+        var entry = r && r.entry;
+        if (!entry || !entry.id) {
+          report("error", "save returned no entry", {
+            adding: adding, ref: lead.ref || "", reply: r, ui: UI_VERSION
+          });
+          hint(stale ? staleMessage()
+                     : "The desk did not confirm the save. Your note is still " +
+                       "here — check desk/logs/calldesk.log.", "failed");
+          return;
+        }
+
         save.textContent = "Add to log";
-        cardState.logId = r.entry.id;
+        cardState.logId = entry.id;
         cardState.notes = "";
         if (notes) notes.value = "";
         hint((adding ? "Added at " : "Saved to the log at ") +
-             shortTime(r.entry.updated || r.entry.when) +
+             shortTime(entry.updated || entry.when) +
              (lead.ref ? " — it is below, and anything else goes in the same entry."
                        : " — it is under Call log, and anything else goes in the same entry."),
              "saved");
@@ -613,7 +712,8 @@
         loadLogCount();
       }).catch(function (err) {
         save.disabled = false;
-        hint(err.message || "Could not write the log.", "failed");
+        hint(stale ? staleMessage() : (err.message || "Could not write the log."),
+             "failed");
       });
     });
   }
@@ -699,7 +799,16 @@
       btn.disabled = true;
       msg.textContent = "";
       api("/api/note", { id: entry.dataset.id, notes: text })
-        .then(function () {
+        .then(function (r) {
+          // Same rule as the card: what is in the box is the only copy of it
+          // until the desk says it has the text.
+          if (!r || !r.entry || !r.entry.id) {
+            btn.disabled = false;
+            report("error", "add-detail returned no entry",
+                   { id: entry.dataset.id, reply: r, ui: UI_VERSION });
+            msg.textContent = stale ? staleMessage() : "The desk did not confirm it.";
+            return;
+          }
           // Close the box before redrawing: a filled one holds the redraw off.
           box.value = "";
           form.hidden = true;
@@ -709,7 +818,8 @@
         })
         .catch(function (err) {
           btn.disabled = false;
-          msg.textContent = err.message || "Could not write the log.";
+          msg.textContent = stale ? staleMessage()
+                                  : (err.message || "Could not write the log.");
         });
     });
   }
@@ -780,6 +890,7 @@
   /* ---------- live state ---------- */
 
   function paintHeader(s) {
+    checkVersion(s.version);
     var dot = document.getElementById("line-dot");
     var text = document.getElementById("line-text");
     var map = {
@@ -806,6 +917,23 @@
             "</span></div>";
         }).join("")
       : '<div class="frow"><span class="nm">No CSV files in desk/mailers yet</span></div>';
+  }
+
+  /* The desk answers with the version of the Python that is running. An old
+     one predates this field entirely, which is itself the answer. */
+  function checkVersion(version) {
+    var bad = version !== UI_VERSION;
+    var banner = document.getElementById("stale");
+    if (banner) {
+      banner.hidden = !bad;
+      if (bad) banner.textContent = staleMessage();
+    }
+    if (bad && !stale) {
+      report("error", "desk is running an older version", {
+        desk: version || "(older than versions)", ui: UI_VERSION
+      });
+    }
+    stale = bad;
   }
 
   function tick() {
