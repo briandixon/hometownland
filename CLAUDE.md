@@ -87,10 +87,27 @@ the form's success path works — submissions print to the terminal.
 
 ## Secrets
 
-Never commit them. `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`, `AIRTABLE_TABLE`, and
-the optional `RESEND_API_KEY` / `NOTIFY_EMAIL` / `NOTIFY_FROM` live in Vercel
-under Settings → Environment Variables. **This repository is public.**
+Never commit them. `AIRTABLE_TOKEN` and the optional `AIRTABLE_BASE_ID` /
+`AIRTABLE_TABLE` / `AIRTABLE_CONTACTS_TABLE` / `RESEND_API_KEY` /
+`NOTIFY_EMAIL` / `NOTIFY_FROM` live in Vercel under Settings → Environment
+Variables. **This repository is public.** Base and table IDs are not secrets —
+they are in the Airtable URL and useless without the token — so `lead.js`
+carries them as defaults; the token never appears anywhere in the repo.
 
 `src/api/lead.js` skips whatever is not configured and still returns success,
 logging the full submission to the Vercel function log, so a lead is never lost
 while integrations are half-configured.
+
+## The CRM
+
+`/api/lead` writes into the sales base `appdd0mQPJU7ZPAtw`: a `Contacts` record
+(reused when the email is already known) and a `Leads` record linked to it,
+marked `Source` = `Website`. The exact field names live in the `LEAD` and
+`CONTACT` maps at the top of `src/api/lead.js` — two of them really do end in a
+space. `python scripts/setup-airtable.py` checks the live base against those
+maps and adds any missing `Leads` field; run it if a lead ever arrives with
+fields blank.
+
+Do not link a website lead's `County`: that field points at `Mailers`, i.e. at a
+mail campaign, and a web lead did not come from one. The county goes in
+`Property County` as text.
