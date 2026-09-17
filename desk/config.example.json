@@ -2,5 +2,6 @@
   "relay_url": "https://www.gohometownland.com/api/call-relay",
   "relay_key": "paste the same value you set as CALL_RELAY_KEY on Vercel",
   "land_portal_token": "optional - your Land Portal API v2 key",
-  "port": 8322
+  "port": 8322,
+  "debug": false
 }

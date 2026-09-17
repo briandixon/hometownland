@@ -3,14 +3,16 @@
     python3 scripts/check.py
     python3 scripts/check.py --skip-drift   # for the pre-commit hook
 
-Three things go wrong on this site, and all three are silent:
+Four things go wrong here, and all four are silent:
 
   1. site/ drifts from src/ because someone edited src/ and forgot to run
      build.py. The stale page deploys and nobody notices for a week.
   2. A placeholder ships to production.
   3. A page stops building and the sitemap quietly loses a URL.
+  4. The Call Desk's two halves disagree about which version they are, which
+     switches off the check that catches a desk running old code.
 
-This rebuilds, then fails loudly on any of the three. Exit code 0 means the
+This rebuilds, then fails loudly on any of the four. Exit code 0 means the
 tree is safe to push.
 """
 import pathlib
@@ -80,6 +82,36 @@ def check_pages():
     return problems
 
 
+def check_desk_version():
+    """calldesk.py and app.js must claim the same version.
+
+    The desk serves its HTML and JavaScript off disk but keeps running the
+    Python it started with, so a pulled update that has not been restarted
+    runs a new page against an old server. The two compare versions at
+    runtime and say so on screen -- which only works while the matching pair
+    genuinely matches. Letting them drift here would leave that warning
+    showing permanently, and a warning that is always on is no warning.
+    """
+    pairs = [
+        (ROOT / "desk" / "calldesk.py", r'^DESK_VERSION = "([^"]+)"'),
+        (ROOT / "desk" / "ui" / "app.js", r'^\s*var UI_VERSION = "([^"]+)";'),
+    ]
+    found = {}
+    for path, pattern in pairs:
+        if not path.is_file():
+            return [f"{path.relative_to(ROOT)} is missing"]
+        m = re.search(pattern, path.read_text(encoding="utf-8"), re.M)
+        if not m:
+            return [f"{path.relative_to(ROOT)} has no version line matching {pattern!r}"]
+        found[path.relative_to(ROOT).as_posix()] = m.group(1)
+
+    if len(set(found.values())) > 1:
+        return ["Call Desk versions disagree: "
+                + ", ".join(f"{k} says {v}" for k, v in found.items())
+                + " — set both to the same string."]
+    return []
+
+
 def check_drift():
     """site/ must be exactly what build.py just produced."""
     out = subprocess.run(
@@ -103,7 +135,8 @@ def main():
         print(build.stdout + build.stderr)
         sys.exit("build.py failed")
 
-    checks = [("pages", check_pages), ("placeholders", check_placeholders)]
+    checks = [("pages", check_pages), ("placeholders", check_placeholders),
+              ("call desk version", check_desk_version)]
     if not skip_drift:
         checks.append(("src/site drift", check_drift))
 

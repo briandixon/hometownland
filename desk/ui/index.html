@@ -69,6 +69,11 @@
     </div>
   </div>
 
+  <!-- Shown only when the running program is older than this page: the desk
+       serves its HTML and JavaScript from disk, so an update that has been
+       pulled but not restarted leaves the two out of step. -->
+  <div class="stale" id="stale" role="alert" hidden></div>
+
   <div id="stage"></div>
 
 </div>

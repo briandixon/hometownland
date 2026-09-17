@@ -355,3 +355,17 @@ td .ui{font-weight:600}
 
 kbd{font-family:var(--mono);font-size:11px;background:var(--sunk);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:1px 6px;white-space:nowrap}
 .foot{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);font-size:12px;color:var(--text-faint);display:flex;flex-wrap:wrap;gap:8px 18px}
+
+/* The running program is older than this page. Everything below it may be
+   wrong, so it sits above the stage and does not scroll away. */
+.stale {
+  margin: 0 0 14px;
+  padding: 12px 15px;
+  border: 1px solid var(--alert);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--alert-soft);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.45;
+}

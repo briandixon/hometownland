@@ -14,6 +14,8 @@ Standard library only, so there is nothing to install.
 import csv
 import http.server
 import json
+import logging
+import logging.handlers
 import os
 import pathlib
 import re
@@ -22,6 +24,7 @@ import ssl
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,6 +40,14 @@ CONFIG = HERE / "config.json"
 DEFAULT_PORT = 8322
 POLL_SECONDS = 2.0
 
+# Bumped whenever the shape of an /api reply changes. ui/app.js carries the
+# same string and says so on screen when the two disagree, because the desk
+# reads its HTML and JavaScript off disk on every request while the Python
+# stays as it was when the window was opened. Pulling an update and not
+# restarting therefore runs a new page against an old server, and the first
+# symptom is a reply missing a field the page is sure is there.
+DESK_VERSION = "2026.09.17"
+
 # Land Portal returns a lot; these are the fields the card actually shows.
 LP_FIELDS = (
     "flood_zone", "land_locked", "tax_amount", "zoning", "land_use_description",
@@ -48,6 +59,106 @@ LP_FIELDS = (
 
 
 # --------------------------------------------------------------------------
+# logging
+# --------------------------------------------------------------------------
+
+# The black window has always been the log, and stays exactly as readable.
+# What it could not do is answer a question asked on Thursday about a call on
+# Tuesday: the window had scrolled, or been closed. The same events now also
+# go to a file, with timestamps, levels and full tracebacks -- including the
+# ones the browser tab sees, which used to exist only in a devtools console
+# nobody had open.
+LOG_FILE = LOGS / "calldesk.log"
+LOG_MAX_BYTES = 2_000_000
+LOG_KEEP = 3
+
+log = logging.getLogger("calldesk")
+
+
+class ConsoleFormat(logging.Formatter):
+    """Console lines keep the plain indented wording they have always had.
+
+    A line is read over someone's shoulder while a phone is ringing, so the
+    level is not spelled out unless it is one worth stopping at.
+    """
+
+    MARK = {logging.WARNING: "  ! ", logging.ERROR: "  !! ",
+            logging.CRITICAL: "  !! "}
+
+    def format(self, record):
+        text = record.getMessage()
+        if record.exc_info:
+            text += "\n" + "".join(traceback.format_exception(*record.exc_info)).rstrip()
+        return self.MARK.get(record.levelno, "  ") + text
+
+
+def setup_logging(debug=False):
+    """Wire up the window and the file. Returns the file path, or None.
+
+    A log file that cannot be written is not a reason to refuse to answer the
+    phone, so this degrades to the window alone and says so.
+    """
+    log.setLevel(logging.DEBUG)
+    log.propagate = False
+    for old in list(log.handlers):
+        # Called again when config.json asks for debug, so the file handler
+        # this replaces has to be closed, not just forgotten.
+        log.removeHandler(old)
+        if isinstance(old, logging.FileHandler):
+            old.close()
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.DEBUG if debug else logging.INFO)
+    console.setFormatter(ConsoleFormat())
+    log.addHandler(console)
+
+    try:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        rotating = logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_KEEP,
+            encoding="utf-8")
+    except OSError as exc:
+        log.warning(f"no log file ({exc}) — this window is the only record")
+        return None
+
+    rotating.setLevel(logging.DEBUG)
+    rotating.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S"))
+    log.addHandler(rotating)
+    return LOG_FILE
+
+
+# What the browser is allowed to call things when it reports something.
+BROWSER_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO,
+                  "warning": logging.WARNING, "warn": logging.WARNING,
+                  "error": logging.ERROR}
+
+
+def log_from_browser(payload):
+    """Record something the page noticed, in the same file as everything else.
+
+    The tab is where most of this desk actually runs, so a fault there was the
+    one thing the log could not see. Kept to what the page chooses to send --
+    an error, which screen it was on, which request failed -- and truncated,
+    because this endpoint is reachable by anything running in that tab.
+    """
+    level = BROWSER_LEVELS.get(
+        str(payload.get("level", "") or "").lower(), logging.INFO)
+    message = " ".join(str(payload.get("message", "") or "").split())[:1000]
+    if not message:
+        return False
+
+    detail = payload.get("detail")
+    if detail not in (None, "", {}, []):
+        try:
+            message += " | " + json.dumps(detail, default=str)[:1000]
+        except (TypeError, ValueError):
+            pass
+    log.log(level, f"browser: {message}")
+    return True
+
+
+# --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
 
@@ -56,6 +167,7 @@ DEFAULT_CONFIG = {
     "relay_key": "",
     "land_portal_token": "",
     "port": DEFAULT_PORT,
+    "debug": False,
 }
 
 
@@ -72,7 +184,7 @@ def ensure_config():
     try:
         CONFIG.write_text(json.dumps(DEFAULT_CONFIG, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:
-        print(f"  could not create config.json: {exc}")
+        log.error(f"could not create config.json: {exc}")
         return False
     return True
 
@@ -88,6 +200,7 @@ def load_config():
         try:
             cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
+            log.error(f"config.json is not valid JSON: {exc}")
             sys.exit(f"config.json is not valid JSON: {exc}")
 
     def pick(key, env, default=""):
@@ -98,6 +211,10 @@ def load_config():
         "relay_key": pick("relay_key", "CALL_RELAY_KEY"),
         "land_portal_token": pick("land_portal_token", "LAND_PORTAL_TOKEN"),
         "port": int(cfg.get("port") or os.environ.get("CALLDESK_PORT") or DEFAULT_PORT),
+        # Turns the window up to everything the log file already keeps: every
+        # request, every reply. Off by default because it is noisy next to a
+        # ringing phone, and the file has it either way.
+        "debug": bool(cfg.get("debug") or os.environ.get("CALLDESK_DEBUG")),
     }
 
 
@@ -462,7 +579,7 @@ class Parcels:
                                         context=ssl.create_default_context()) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
-            print(f"  land portal: {pid} failed ({exc})")
+            log.warning(f"land portal: {pid} failed ({exc})")
             return None
 
         feature = body.get("data") or {}
@@ -480,9 +597,10 @@ class Parcels:
             try:
                 self.path.write_text(json.dumps(self.cache), encoding="utf-8")
             except OSError as exc:
-                print(f"  could not write parcel cache: {exc}")
+                log.error(f"could not write parcel cache: {exc}")
         left = slim.get("requests_left")
-        print(f"  land portal: fetched {pid}" + (f" ({left} requests left)" if left is not None else ""))
+        log.info(f"land portal: fetched {pid}"
+                 + (f" ({left} requests left)" if left is not None else ""))
         return slim
 
 
@@ -503,6 +621,7 @@ class Line:
         self.ready = bool(cfg["relay_url"] and cfg["relay_key"])
         self.status = "starting" if self.ready else "off"
         self.detail = "" if self.ready else "no relay key — manual lookup only"
+        self._last_complaint = ""
         self.lock = threading.Lock()
 
     def start(self):
@@ -516,13 +635,27 @@ class Line:
                 self._poll()
                 if self.status != "listening":
                     self.status, self.detail = "listening", ""
+                    self._last_complaint = ""
+                    log.info("relay: listening")
             except urllib.error.HTTPError as exc:
                 self.status = "error"
                 self.detail = ("relay rejected the key" if exc.code == 401
                                else f"relay returned {exc.code}")
+                self._complain(self.detail)
             except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
                 self.status, self.detail = "error", f"cannot reach the relay ({exc})"
+                self._complain(self.detail)
             time.sleep(POLL_SECONDS)
+
+    def _complain(self, detail):
+        """Say it once, not every two seconds.
+
+        An unreachable relay is one fact, and a log that repeats it thirty
+        times a minute buries whatever else happened that morning.
+        """
+        if detail != self._last_complaint:
+            self._last_complaint = detail
+            log.warning(f"relay: {detail}")
 
     def _poll(self):
         url = self.cfg["relay_url"] + ("&" if "?" in self.cfg["relay_url"] else "?") + \
@@ -554,7 +687,9 @@ class Line:
                 "at": at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "matched": bool(hit), "card": card, "seq": time.time(),
             }
-        print(f"  ringing {number}" + (" — matched" if hit else " — no mailer match"))
+        log.info(f"ringing {number or '(no number)'} via {source}"
+                 + (f" — matched {hit['lead'].get('ref') or 'a record'}" if hit
+                    else " — no mailer match"))
 
     def _enrich(self, lead):
         parcel = self.parcels.fetch(lead.get("pid"), lead.get("fips"))
@@ -569,6 +704,7 @@ class Line:
         with self.lock:
             current = json.loads(json.dumps(self.current)) if self.current else None
         return {
+            "version": DESK_VERSION,
             "status": self.status,
             "detail": self.detail,
             "store": self.store,
@@ -594,11 +730,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
     parcels = None
 
     def log_message(self, fmt, *args):
-        pass  # the useful events print themselves
+        pass  # every request is logged below, with its status and its timing
+
+    def log_error(self, fmt, *args):
+        # Usually the tab being closed mid-poll. Worth keeping, not worth
+        # putting in front of someone answering a phone.
+        try:
+            log.debug("http: " + (fmt % args if args else fmt))
+        except (TypeError, ValueError):
+            log.debug(f"http: {fmt} {args}")
+
+    # -- request plumbing --
+    def _handle(self, verb, route):
+        """Run one route, and make sure something is always sent back.
+
+        An exception used to leave the request unanswered and the traceback in
+        a window that had scrolled: the tab showed "Call Desk stopped" with no
+        way to find out why. Now the fault is logged with its traceback and
+        the page is told plainly that there is one.
+        """
+        self._status = None
+        started = time.perf_counter()
+        try:
+            route()
+        except Exception:
+            log.error(f"{verb} {self.path} failed", exc_info=True)
+            if self._status is None:
+                try:
+                    self._send(500, {"error": "the desk hit an unexpected error — "
+                                              f"see {LOG_FILE.name}"})
+                except OSError:
+                    pass
+        finally:
+            took = (time.perf_counter() - started) * 1000
+            log.debug(f"{verb} {self.path} -> {self._status} in {took:.0f}ms")
 
     # -- helpers --
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         raw = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
+        self._status = code
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(raw)))
@@ -617,6 +787,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # -- routes --
     def do_GET(self):
+        self._handle("GET", self._route_get)
+
+    def do_POST(self):
+        self._handle("POST", self._route_post)
+
+    def _route_get(self):
         url = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(url.query)
         route = url.path
@@ -655,19 +831,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if route == "/api/reload":
             self.library.load()
-            print(f"  reloaded {len(self.library.leads)} records "
-                  f"from {len(self.library.files)} file(s)")
+            log.info(f"reloaded {len(self.library.leads)} records "
+                     f"from {len(self.library.files)} file(s)")
             return self._send(200, self.line.snapshot())
 
+        log.warning(f"GET {self.path}: no such route")
         return self._send(404, {"error": "not found"})
 
-    def do_POST(self):
+    def _route_post(self):
         url = urllib.parse.urlparse(self.path)
         try:
             length = int(self.headers.get("Content-Length") or 0)
             payload = json.loads(self.rfile.read(length) or b"{}")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            log.warning(f"POST {url.path}: unreadable body ({exc})")
             return self._send(400, {"error": "bad json"})
+        if not isinstance(payload, dict):
+            log.warning(f"POST {url.path}: body was {type(payload).__name__}, not an object")
+            return self._send(400, {"error": "bad json"})
+
+        # Whatever the page reports about itself goes in before anything else,
+        # so a tab that is failing can still say so.
+        if url.path == "/api/client-log":
+            return self._send(200, {"logged": log_from_browser(payload)})
 
         if url.path == "/api/ring":           # the test button
             self.line.ring(payload.get("number", ""), source="test")
@@ -689,8 +875,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Both saving a call and adding to one already saved: the payload
             # carries an id for the second.
             result = save_note(payload)
+            if not result.get("saved"):
+                log.warning(f"call log: refused a note — {result.get('error')}")
             return self._send(200 if result.get("saved") else 400, result)
 
+        log.warning(f"POST {self.path}: no such route")
         return self._send(404, {"error": "not found"})
 
 
@@ -740,7 +929,7 @@ def read_log():
         with LOG_PATH.open(encoding="utf-8-sig", newline="") as fh:
             raw = list(csv.DictReader(fh))
     except (OSError, UnicodeDecodeError, csv.Error) as exc:
-        print(f"  could not read the call log: {exc}")
+        log.error(f"could not read the call log: {exc}")
         return [], False
 
     rows, taken, upgraded = [], set(), False
@@ -770,7 +959,7 @@ def write_log(rows):
             writer.writerows(rows)
         tmp.replace(LOG_PATH)
     except OSError as exc:
-        print(f"  could not write the call log: {exc}")
+        log.error(f"could not write the call log: {exc}")
         return False
     return True
 
@@ -810,6 +999,7 @@ def save_note(payload):
                 if row["id"] != entry_id:
                     continue
                 if not text and not outcome:
+                    log.warning(f"call log: nothing to add to {entry_id}")
                     return {"saved": False, "error": "nothing to add"}
                 if text:
                     row["notes"] = (row["notes"] + "\n" if row["notes"] else "") + \
@@ -819,8 +1009,11 @@ def save_note(payload):
                 row["updated"] = _stamp()
                 if not write_log(rows):
                     return {"saved": False, "error": "could not write the log"}
-                print(f"  call log: added to {entry_id}")
+                log.info(f"call log: added {len(text)} characters to {entry_id}"
+                         + (f", outcome {outcome}" if outcome else ""))
                 return {"saved": True, "entry": row}
+            log.warning(f"call log: no entry {entry_id} to add to "
+                        f"({len(rows)} in the log)")
             return {"saved": False, "error": "that call is no longer in the log"}
 
         row = {
@@ -838,8 +1031,9 @@ def save_note(payload):
         rows.append(row)
         if not write_log(rows):
             return {"saved": False, "error": "could not write the log"}
-        print(f"  call log: saved {row['id']}"
-              + (f" — {outcome}" if outcome else ""))
+        log.info(f"call log: saved {row['id']} for "
+                 f"{row['reference'] or row['number'] or 'an unknown caller'}"
+                 + (f" — {outcome}" if outcome else ""))
         return {"saved": True, "entry": row}
 
 
@@ -871,37 +1065,55 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
-    fresh = ensure_config()
-    cfg = load_config()
+    debug = "--debug" in sys.argv
     print("Hometown Land Call Desk")
     print("-" * 46)
+
+    log_file = setup_logging(debug)
+    fresh = ensure_config()
+    cfg = load_config()
+    if cfg["debug"] and not debug:
+        debug = True
+        setup_logging(True)
+
+    # First line in the file, every run: which code is answering, on what, and
+    # since when. A log that cannot say which version produced it cannot
+    # settle an argument about whether an update was ever picked up.
+    log.debug(f"--- call desk {DESK_VERSION} starting, python "
+              f"{sys.version.split()[0]} on {sys.platform} ---")
+
     if fresh:
-        print(f"  created {CONFIG.name} — open it to switch on live calls")
+        log.info(f"created {CONFIG.name} — open it to switch on live calls")
 
     library = Library().load()
-    print(f"  {len(library.leads)} records from {len(library.files)} mailer file(s) "
-          f"in {MAILERS}")
+    log.info(f"{len(library.leads)} records from {len(library.files)} mailer file(s) "
+             f"in {MAILERS}")
     for f in library.files:
         note = f" — {f['error']}" if f.get("error") else ""
-        print(f"    {f['name']}: {f['records']} records, {f['reachable']} reachable{note}")
+        log.info(f"  {f['name']}: {f['records']} records, {f['reachable']} reachable{note}")
+        if f.get("error"):
+            log.warning(f"{f['name']} did not load cleanly: {f['error']}")
     if not library.files:
-        print("    (none yet — drop your mailer CSVs in that folder and restart)")
+        log.info("  (none yet — drop your mailer CSVs in that folder and restart)")
 
     saved, _ = read_log()
     if saved:
-        print(f"  {len(saved)} calls already in {LOG_PATH}")
+        log.info(f"{len(saved)} calls already in {LOG_PATH}")
 
     parcels = Parcels(cfg["land_portal_token"])
     if not cfg["land_portal_token"]:
-        print("  land portal: no token, parcel detail comes from the mailer file only")
+        log.info("land portal: no token, parcel detail comes from the mailer file only")
 
     line = Line(cfg, library, parcels)
     line.start()
     if line.ready:
-        print(f"  watching the relay every {POLL_SECONDS:g}s for inbound calls")
+        log.info(f"watching the relay every {POLL_SECONDS:g}s for inbound calls")
     else:
-        print("  no relay key in config.json — look-ups work, but calls will not")
-        print("    pop on their own. Add \"relay_key\" and start this again.")
+        log.info("no relay key in config.json — look-ups work, but calls will not")
+        log.info("  pop on their own. Add \"relay_key\" and start this again.")
+
+    if log_file:
+        log.info(f"logging to {log_file}" + (" (debug)" if debug else ""))
 
     Handler.line, Handler.library, Handler.parcels = line, library, parcels
 
@@ -909,12 +1121,14 @@ def main():
     try:
         server = Server(("127.0.0.1", port), Handler)
     except OSError as exc:
+        log.error(f"cannot listen on port {port}: {exc}")
         sys.exit(f"\nCannot listen on port {port}: {exc}\n"
                  f"Something else is probably using it. Set a different one in config.json.")
 
     url = f"http://127.0.0.1:{port}/"
     print(f"\n  Call Desk is open at {url}")
     print("  Leave this window running. Press Ctrl+C to stop.\n")
+    log.debug(f"serving {UI} on {url}")
     try:
         webbrowser.open(url)
     except webbrowser.Error:
@@ -923,8 +1137,12 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        log.debug("--- stopped from the keyboard ---")
         print("\nStopped.")
         server.shutdown()
+    except Exception:
+        log.critical("the desk stopped on an unexpected error", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
