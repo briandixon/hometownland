@@ -81,17 +81,49 @@ setup. They are no longer the deploy path and cannot run in a cloud session.
 
 ## Airtable
 
-The `Website Leads` table does not exist yet — the connected token is read-only
-on the base. Once your user has creator access:
+The form files straight into the sales CRM
+(base `appdd0mQPJU7ZPAtw`) — no separate website table to reconcile later:
+
+- **Contacts** — the seller, reused if that email is already in the CRM, so a
+  second submission does not become a second contact.
+- **Leads** — the submission itself, linked to that contact, `Source` =
+  `Website`, `Sales Stage` = `1.0 New Lead`, `Reference Number` = `WEB`.
+
+`Leads` gained ten fields for the answers the form collects that the CRM had
+nowhere to put: `Source`, `Property State`, `Property County`, `Parcel / APN`,
+`Ownership`, `Road Access`, `Timeline`, `Best Time`, `SMS Consent` and
+`SMS Consent At`. Everything else writes to fields the sales team already uses.
+
+`Leads.County` is a link to **Mailers**, i.e. to a mail campaign. A website
+lead did not come from a mailer, so that link is left empty and the county is
+written as text into `Property County` instead — crediting a campaign for a
+lead it did not produce would quietly corrupt the mailer numbers.
+
+To confirm the base still matches what `api/lead.js` writes (after a field
+rename, say):
 
 ```bash
-python scripts/setup-airtable.py
+python scripts/setup-airtable.py            # report only
+python scripts/setup-airtable.py --create   # add any missing Leads field
 ```
 
-That creates the table with the exact field names `api/lead.js` writes to. The
-existing `Leads` table is deliberately not reused: it is shaped for mailer and
-cold-call leads, and its `County` field is a linked record a web form cannot
-populate.
+## Email notification
+
+Two ways; you only need one.
+
+**Airtable automation (set up, needs turning on).** *Website Lead — Email
+Notification* in the base watches for `Source` = `Website` and emails the
+submission with a link to the record. Airtable saves new automations switched
+off, so open
+[the automation](https://airtable.com/appdd0mQPJU7ZPAtw/wflUWRuEhWUlBxzvH),
+check the recipient in the **Send email** step, and turn it on. Nothing to
+configure on the website side.
+
+**Resend from `/api/lead`.** Set `RESEND_API_KEY`, `NOTIFY_EMAIL` and
+`NOTIFY_FROM` and the endpoint sends the mail itself, including when the
+Airtable write is the thing that failed — which the Airtable automation cannot
+do by definition. Leave them unset to use only the automation, or set them and
+turn the automation off; with both on you get two emails per lead.
 
 ## Environment variables
 
@@ -100,11 +132,12 @@ optional and the endpoint skips whatever is not configured:
 
 | Variable | Purpose |
 |---|---|
-| `AIRTABLE_TOKEN` | Personal access token with `data.records:write` |
-| `AIRTABLE_BASE_ID` | e.g. `appXXXXXXXXXXXXXX` |
-| `AIRTABLE_TABLE` | Table name, e.g. `Website Leads` |
-| `RESEND_API_KEY` | Optional — enables the email notification |
-| `NOTIFY_EMAIL` | Where notifications are sent |
+| `AIRTABLE_TOKEN` | **The only one actually required.** Personal access token with `data.records:read` and `data.records:write`, granted on the CRM base |
+| `AIRTABLE_BASE_ID` | Optional — defaults to the CRM base |
+| `AIRTABLE_TABLE` | Optional — defaults to `Leads` |
+| `AIRTABLE_CONTACTS_TABLE` | Optional — defaults to `Contacts` |
+| `RESEND_API_KEY` | Optional — enables the email notification from the endpoint |
+| `NOTIFY_EMAIL` | Where those notifications are sent |
 | `NOTIFY_FROM` | Verified sender address |
 
 With nothing configured the endpoint still returns success and logs the full

@@ -167,11 +167,15 @@ revert commit. Without the hook you would have to rebuild by hand — reverting
 
 These retire recurring friction rather than fixing a single change:
 
-1. **Set the Vercel environment variables** so leads actually reach Airtable:
-   `AIRTABLE_TOKEN`, `AIRTABLE_BASE_ID`, `AIRTABLE_TABLE`, and optionally
-   `RESEND_API_KEY` / `NOTIFY_EMAIL` / `NOTIFY_FROM`. Until then the form
-   returns success and logs to the Vercel function log — leads are recoverable
-   but nobody is alerted.
+1. **Set `AIRTABLE_TOKEN` in Vercel** so leads actually reach the CRM. It is
+   the only variable the integration needs — base and table names default to
+   the CRM's `Leads` and `Contacts`. The token needs `data.records:read` and
+   `data.records:write`, granted on base `appdd0mQPJU7ZPAtw`. Until it is set
+   the form returns success and logs to the Vercel function log — leads are
+   recoverable but nobody is alerted.
+   Then turn on the **Website Lead — Email Notification** automation in
+   Airtable, which is set up but saved switched off. See the README for the
+   Resend alternative and the full variable list.
 2. **Confirm Vercel's production branch is `main`**, under the project's
    Settings → Git. Vercel stores this separately from GitHub's default branch,
    so changing the default does not necessarily change it. If it still reads
