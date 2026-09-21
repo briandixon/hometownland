@@ -1,6 +1,6 @@
 # gohometownland.com — working notes for Claude
 
-Static marketing site. Eight pages assembled by `build.py` from `src/`.
+Static marketing site. Nine pages assembled by `build.py` from `src/`.
 No framework, no node build, no test suite.
 
 ## The one rule
@@ -66,6 +66,10 @@ Page metadata is comments at the top of each `src/pages/*.html`:
 <!--nav: how-it-works-->
 ```
 
+Two metadata comments are optional: `<!--robots: noindex-->` keeps a page out
+of search *and* out of the sitemap, and `<!--script: stats-->` loads
+`/assets/js/stats.js` on that page alone. `/stats` uses both.
+
 `{{FORM}}` expands to the multi-step offer form. The state dropdown comes from
 the `STATES` list in `build.py`. Shared chrome lives in `src/partials/` — a
 footer edit changes all eight pages, so rebuild after touching it.
@@ -97,6 +101,24 @@ carries them as defaults; the token never appears anywhere in the repo.
 `src/api/lead.js` skips whatever is not configured and still returns success,
 logging the full submission to the Vercel function log, so a lead is never lost
 while integrations are half-configured.
+
+## Traffic
+
+`/stats` is a private dashboard: visits, page views, offer requests, and where
+visitors came from (referrer or campaign, country, state, city, device). It is
+noindex, `Disallow`ed, unlinked, and gated on the `TRAFFIC_KEY` env var.
+
+Every page beacons to `POST /api/track`, which increments fields in a per-day
+Redis hash — **counters only**, no row per visitor, no IP, no cookie. Geography
+comes from Vercel's `x-vercel-ip-*` headers. It uses the same Redis the Call
+Desk relay uses and accepts the same variable names, so a project set up for
+the desk needs nothing added. No store means nothing is recorded and the
+dashboard says so rather than showing zeros.
+
+Deliberately not counted, so do not treat any of these as a bug: crawlers,
+browsers sending Do Not Track, the `/stats` page itself, and every host that is
+not `gohometownland.com` — which is what keeps preview deploys out of the real
+numbers, and also why the beacon appears to do nothing on a preview URL.
 
 ## The CRM
 

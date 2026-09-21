@@ -1,0 +1,64 @@
+<!--title: Traffic-->
+<!--desc: Private traffic dashboard for gohometownland.com.-->
+<!--nav: none-->
+<!--robots: noindex, nofollow-->
+<!--script: stats-->
+
+<div class="pagehead"><div class="wrap">
+  <div class="rule"></div>
+  <h1>Traffic</h1>
+  <p>How many people came to the site, where they came from, and what they read.</p>
+</div></div>
+
+<section>
+  <div class="wrap">
+
+    <form id="keyGate" class="keygate" hidden>
+      <div class="fld">
+        <label for="keyInput">Dashboard key</label>
+        <input id="keyInput" type="password" autocomplete="current-password"
+               placeholder="The TRAFFIC_KEY set on the Vercel project">
+        <div class="msg" id="keyMsg">That key was not accepted.</div>
+      </div>
+      <button class="btn" type="submit">Show the numbers</button>
+      <p class="note">Kept in this browser so you only type it once. Nothing on the
+        public site links here.</p>
+    </form>
+
+    <p id="dashNote" class="dashnote" hidden></p>
+
+    <div id="dash" hidden>
+      <div class="dashbar">
+        <div class="fld">
+          <label for="rangeSel">Showing</label>
+          <select id="rangeSel">
+            <option value="7">The last 7 days</option>
+            <option value="30" selected>The last 30 days</option>
+            <option value="90">The last 90 days</option>
+            <option value="120">The last 120 days</option>
+          </select>
+        </div>
+        <div class="dashbar-act">
+          <button class="backlink" type="button" id="csvBtn">Download CSV</button>
+          <button class="backlink" type="button" id="forgetBtn">Forget key</button>
+        </div>
+      </div>
+
+      <div class="tiles" id="tiles"></div>
+
+      <div class="panel">
+        <h2>Day by day</h2>
+        <div class="chart" id="chart"></div>
+        <div class="legend">
+          <span><i class="sw sw-view"></i> Page views</span>
+          <span><i class="sw sw-visit"></i> Visits</span>
+        </div>
+      </div>
+
+      <div class="panels" id="panels"></div>
+
+      <p class="note" id="dashFoot"></p>
+    </div>
+
+  </div>
+</section>

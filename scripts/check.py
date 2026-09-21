@@ -39,8 +39,12 @@ FORBIDDEN = [
 
 EXPECTED_PAGES = {
     "about", "contact", "faq", "how-it-works",
-    "index", "privacy", "terms", "thank-you",
+    "index", "privacy", "terms", "thank-you", "stats",
 }
+
+# Pages deliberately kept out of the sitemap: the confirmation page nobody
+# should land on cold, and the private traffic dashboard.
+UNLISTED_PAGES = {"thank-you", "stats"}
 
 
 def scanned_files(base):
@@ -76,9 +80,9 @@ def check_pages():
                         " — add them to EXPECTED_PAGES if intentional")
     sitemap = (ROOT / "site" / "sitemap.xml").read_text(encoding="utf-8")
     urls = len(re.findall(r"<loc>", sitemap))
-    # thank-you is deliberately excluded from the sitemap
-    if urls != len(EXPECTED_PAGES) - 1:
-        problems.append(f"sitemap has {urls} urls, expected {len(EXPECTED_PAGES) - 1}")
+    expected = len(EXPECTED_PAGES - UNLISTED_PAGES)
+    if urls != expected:
+        problems.append(f"sitemap has {urls} urls, expected {expected}")
     return problems
 
 

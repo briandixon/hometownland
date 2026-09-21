@@ -1,6 +1,6 @@
 # Hometown Land — gohometownland.com
 
-Static site, hand-written, no framework. Eight pages built from shared partials.
+Static site, hand-written, no framework. Nine pages built from shared partials.
 
 ## Layout
 
@@ -10,6 +10,7 @@ src/                 edit these
   partials/          header, footer, offer form — shared across all pages
   assets/            css, js, images
   api/lead.js        serverless endpoint the form posts to
+  api/track.js       traffic counters in, /stats numbers out
   vercel.json        clean URLs, cache and security headers
 build.py             src/ -> site/
 serve.py             local preview with Vercel-style clean URLs
@@ -27,7 +28,8 @@ python build.py && python serve.py 8322
 ```
 
 Then open http://localhost:8322. The dev server resolves `/about` to `about.html`
-the way Vercel does, and stubs `/api/lead` so the form's success path works
+the way Vercel does, and stubs `/api/lead` and `/api/track` so both the form's
+success path and the `/stats` dashboard work
 locally — submissions print to the terminal.
 
 Page metadata lives in comments at the top of each file in `src/pages/`:
@@ -125,6 +127,39 @@ Airtable write is the thing that failed — which the Airtable automation cannot
 do by definition. Leave them unset to use only the automation, or set them and
 turn the automation off; with both on you get two emails per lead.
 
+## Traffic
+
+`/stats` is a private dashboard showing visits, page views, submitted offer
+requests, and where visitors came from — referring site or campaign, country,
+state, city and device. It is `noindex`, disallowed in `robots.txt`, linked
+from nowhere, and asks for `TRAFFIC_KEY` before it shows anything.
+
+Every page beacons to `POST /api/track`, which adds 1 to a handful of fields in
+a per-day Redis hash. **Counters only**: no row per visitor, no IP address, no
+cookie, no identifier outliving the tab. Geography comes from Vercel's own
+`x-vercel-ip-*` edge headers, so it is accurate to the city at best and wrong
+for anyone on a VPN. Known crawlers, `Do Not Track` browsers, the dashboard
+itself and every preview deployment are all left out, which means the true
+figures run slightly above what is shown.
+
+Two things switch it on:
+
+1. **Storage.** Vercel dashboard > Storage > add Redis. Any of the variable
+   pairs the Call Desk already accepts works, and if the desk is set up the
+   analytics needs nothing added: `KV_REST_API_URL` + `KV_REST_API_TOKEN`,
+   `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, or `REDIS_URL` /
+   `KV_URL`. With no store the endpoint records nothing and `/stats` says so.
+2. **`TRAFFIC_KEY`.** Any long random string; it is the dashboard password.
+   Generate one with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
+
+Roughly 3 Redis commands per page view, 10 on the first page of a visit — a few
+thousand views a day fits inside a free Upstash plan. Days expire after 400
+days on their own.
+
+Tag your own links to see what a campaign brought in: `?utm_source=postcard`
+and `?utm_campaign=spring-mailer` show up under **Where visits came from** and
+**Campaigns**.
+
 ## Environment variables
 
 Set these in Vercel under Settings > Environment Variables. Each integration is
@@ -139,6 +174,8 @@ optional and the endpoint skips whatever is not configured:
 | `RESEND_API_KEY` | Optional — enables the email notification from the endpoint |
 | `NOTIFY_EMAIL` | Where those notifications are sent |
 | `NOTIFY_FROM` | Verified sender address |
+| `TRAFFIC_KEY` | The `/stats` dashboard password. Unset means the dashboard is off; recording still happens |
+| `KV_REST_API_*` / `UPSTASH_REDIS_REST_*` / `REDIS_URL` | Where traffic counters are kept. Shared with the Call Desk relay |
 
 With nothing configured the endpoint still returns success and logs the full
 submission to the Vercel function log, so a lead is never silently lost while

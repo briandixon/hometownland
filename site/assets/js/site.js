@@ -1,4 +1,67 @@
-/* Hometown Land — multi-step offer form.
+/* Hometown Land — site behaviour: the traffic beacon, then the offer form. */
+
+/* Traffic beacon.
+   Tells /api/track that a page was read. Aggregate counts only: no cookie, no
+   identifier, nothing that outlives the browser tab. The one thing kept per
+   visit is a sessionStorage flag saying "this tab has already been counted",
+   so a person reading four pages is one visit rather than four.
+   A visitor sending Do Not Track is not counted at all. */
+(function () {
+  "use strict";
+
+  function post(payload) {
+    try {
+      var body = JSON.stringify(payload);
+      if (navigator.sendBeacon) {
+        /* sendBeacon survives the page being navigated away from, which is
+           exactly what happens on the form's redirect to /thank-you. */
+        navigator.sendBeacon("/api/track", new Blob([body], { type: "application/json" }));
+      } else {
+        fetch("/api/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: body,
+          keepalive: true
+        }).catch(function () { /* a missed count is not worth a console error */ });
+      }
+    } catch (e) { /* ditto */ }
+  }
+
+  /* Reading your own dashboard is not traffic. */
+  if (location.pathname.indexOf("/stats") === 0) return;
+
+  /* An explicit "do not track me" is honoured, which means the totals run a
+     few percent under the true figure. That is the trade, and it is stated on
+     the dashboard so nobody reads the gap as lost traffic. */
+  var dnt = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
+  if (dnt === "1" || dnt === "yes") return;
+
+  /* Is this the first page of this visit? sessionStorage is per tab and is
+     emptied when the tab closes. Where it is unavailable — private modes block
+     it — fall back to "did they arrive from somewhere other than this site". */
+  var first;
+  try {
+    first = !sessionStorage.getItem("htl.seen");
+    if (first) sessionStorage.setItem("htl.seen", "1");
+  } catch (e) {
+    first = document.referrer.indexOf(location.origin) !== 0;
+  }
+
+  var q = new URLSearchParams(location.search);
+  post({
+    p: location.pathname,
+    r: document.referrer,
+    s: q.get("utm_source") || q.get("ref") || "",
+    c: q.get("utm_campaign") || "",
+    n: first ? 1 : 0
+  });
+
+  /* Named events. Only one today: a submitted offer request, so the dashboard
+     can put leads next to the traffic that produced them. */
+  window.htlEvent = function (name) { post({ e: name }); };
+})();
+
+/* Multi-step offer form.
    Progressive enhancement: without JS every fieldset is visible and the form
    still posts normally to /api/lead. */
 (function () {
@@ -107,6 +170,7 @@
     })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
+        if (window.htlEvent) window.htlEvent("lead");
         window.location.href = "/thank-you";
       })
       .catch(function () {
