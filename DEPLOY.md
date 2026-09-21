@@ -111,8 +111,10 @@ first**, see the trap below.
 | Colors, spacing, type | `src/assets/css/site.css` |
 | Form behaviour, validation, error text | `src/assets/js/site.js` |
 | Where leads go | `src/api/lead.js` |
+| What traffic is counted, or the `/stats` dashboard | `src/api/track.js`, `src/assets/js/stats.js`, `src/pages/stats.html` |
 | A photo | drop the file in `src/assets/img/`, reference it, rebuild |
 | Add a page | new `src/pages/<slug>.html` with the metadata comments, add a nav link in `src/partials/header.html`, add the slug to `EXPECTED_PAGES` in `scripts/check.py` |
+| Add a page that should stay unlisted | as above, plus `<!--robots: noindex-->`, a `Disallow` line in `src/robots.txt`, and the slug in `UNLISTED_PAGES` in `scripts/check.py` |
 
 Contact details appear in **six** files at once — the footer partial, contact,
 privacy, terms, thank-you, and an error string in `site.js`. Grep for the old

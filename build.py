@@ -8,6 +8,8 @@ Each page starts with metadata comments:
     <!--title: Page Title-->
     <!--desc: Meta description sentence.-->
     <!--nav: how-it-works-->        (which nav item to mark active; optional)
+    <!--robots: noindex-->          (keep it out of search and the sitemap; optional)
+    <!--script: stats-->            (also load /assets/js/stats.js; optional)
 
 Run:  python build.py
 """
@@ -41,7 +43,7 @@ SHELL = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="{desc}">
+<meta name="description" content="{desc}">{robots}
 <link rel="canonical" href="{canonical}">
 <meta property="og:title" content="{title}">
 <meta property="og:description" content="{desc}">
@@ -64,12 +66,12 @@ SHELL = """<!doctype html>
 {content}
 </main>
 {footer}
-<script src="/assets/js/site.js" defer></script>
+<script src="/assets/js/site.js" defer></script>{scripts}
 </body>
 </html>
 """
 
-META = re.compile(r"<!--\s*(title|desc|nav)\s*:\s*(.*?)\s*-->\s*", re.I)
+META = re.compile(r"<!--\s*(title|desc|nav|robots|script)\s*:\s*(.*?)\s*-->\s*", re.I)
 
 
 def read(p):
@@ -111,6 +113,7 @@ def build():
 
     pages = sorted((SRC / "pages").glob("*.html"))
     slugs = []
+    listed = []          # slugs that belong in the sitemap
     for page in pages:
         raw = page.read_text(encoding="utf-8")
         meta = {k.lower(): v for k, v in META.findall(raw)}
@@ -123,6 +126,15 @@ def build():
         canonical = BASE_URL + ("/" if slug == "index" else f"/{slug}")
 
         content = content.replace("{{FORM}}", form).replace("{{STATES}}", state_options())
+
+        # A noindex page is asking not to be found: keep it out of the sitemap
+        # too, or the sitemap invites the crawler the meta tag turns away.
+        robots = meta.get("robots", "")
+        robots_tag = f'\n<meta name="robots" content="{robots}">' if robots else ""
+        scripts = "".join(
+            f'\n<script src="/assets/js/{name.strip()}.js" defer></script>'
+            for name in meta.get("script", "").split(",") if name.strip())
+
         nav_key = meta.get("nav", slug)
         if nav_key == "index":
             # matched on the full tag: the brand link is also href="/" and must not be marked
@@ -132,15 +144,18 @@ def build():
 
         OUT.joinpath(f"{slug}.html").write_text(
             SHELL.format(title=full_title, desc=meta.get("desc", ""), canonical=canonical,
-                         base=BASE_URL, header=hdr, footer=footer, content=content),
+                         base=BASE_URL, header=hdr, footer=footer, content=content,
+                         robots=robots_tag, scripts=scripts),
             encoding="utf-8")
         slugs.append(slug)
+        if slug != "thank-you" and "noindex" not in robots:
+            listed.append(slug)
         print(f"  {slug}.html")
 
     # sitemap
     urls = "".join(
         f"\n  <url><loc>{BASE_URL}{'/' if s == 'index' else '/' + s}</loc></url>"
-        for s in slugs if s != "thank-you")
+        for s in listed)
     OUT.joinpath("sitemap.xml").write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{urls}\n</urlset>\n',

@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /thank-you
+Disallow: /stats
 
 Sitemap: https://www.gohometownland.com/sitemap.xml

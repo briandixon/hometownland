@@ -213,6 +213,56 @@ footer img{width:66px;height:auto;margin:0 auto 14px}
   border:2px solid var(--g-600);display:flex;align-items:center;justify-content:center}
 .done p{font-size:18.5px;max-width:34em;margin:0 auto 1.05em}
 
+/* ---------- traffic dashboard (/stats) ---------- */
+.keygate{max-width:420px;border:1px solid var(--rule);border-top:3px solid var(--g-700);
+  border-radius:2px;background:var(--white);padding:24px}
+.keygate .btn{width:100%;text-align:center}
+.note{font-size:13.5px;color:var(--muted);line-height:1.55;margin:14px 0 0}
+.dashnote{background:var(--off);border:1px solid var(--rule);border-radius:2px;
+  padding:16px 18px;font-size:15px;color:var(--body);margin:0 0 24px}
+.dashbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;
+  flex-wrap:wrap;margin-bottom:26px}
+.dashbar .fld{margin:0;min-width:230px}
+.dashbar-act{display:flex;gap:18px;padding-bottom:9px}
+
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:0;
+  border:1px solid var(--rule);border-top:3px solid var(--g-700);
+  border-radius:2px;background:var(--white);margin-bottom:26px}
+.tile{padding:22px 24px;border-right:1px solid var(--rule)}
+.tile:last-child{border-right:0}
+.tile-n{font-family:Newsreader,Georgia,serif;font-size:34px;color:var(--navy-700);
+  line-height:1.15}
+.tile-l{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--g-600);
+  font-weight:600;margin-top:6px}
+.tile-s{font-size:13px;color:var(--muted);margin-top:5px}
+
+.panel{border:1px solid var(--rule);border-radius:2px;background:var(--white);
+  padding:22px 24px 24px;margin-bottom:24px}
+.panel h2{font-size:19px;margin:0 0 18px}
+.panels{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+.panels .panel{margin:0}
+
+.chart{display:flex;align-items:flex-end;gap:2px;height:170px;
+  border-bottom:1px solid var(--rule)}
+.chart .col{flex:1;height:100%;display:flex;align-items:flex-end;min-width:3px}
+.chart .bar{position:relative;width:100%;background:var(--rule);min-height:1px}
+.chart .bar i{position:absolute;left:0;bottom:0;width:100%;background:var(--g-600)}
+.chart-ends{display:flex;justify-content:space-between;font-size:12.5px;
+  color:var(--muted);margin-top:8px}
+.legend{display:flex;gap:22px;font-size:13px;color:var(--muted);margin-top:12px}
+.sw{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:-1px}
+.sw-view{background:var(--rule)}
+.sw-visit{background:var(--g-600)}
+
+.tbl{display:flex;flex-direction:column}
+.tr{display:grid;grid-template-columns:minmax(0,1fr) 90px 62px;align-items:center;
+  gap:14px;padding:9px 0;border-top:1px solid var(--rule-lt);font-size:14.5px}
+.tr:first-child{border-top:0}
+.td-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--body)}
+.td-b{height:7px;background:var(--rule-lt);display:block}
+.td-b i{display:block;height:100%;background:var(--g-300)}
+.td-c{text-align:right;font-weight:600;color:var(--navy-700);font-variant-numeric:tabular-nums}
+
 /* ---------- responsive ---------- */
 @media(max-width:900px){
   .lede-in{grid-template-columns:1fr;gap:40px}
@@ -220,6 +270,11 @@ footer img{width:66px;height:auto;margin:0 auto 14px}
   .stp{border-right:0;border-bottom:1px solid var(--rule);padding:26px 0 20px}
   .stp:last-child{border-bottom:0}
   .pts{grid-template-columns:1fr;gap:30px}
+  .tiles{grid-template-columns:1fr 1fr}
+  .tile{border-bottom:1px solid var(--rule)}
+  .tile:nth-child(2n){border-right:0}
+  .tile:nth-last-child(-n+2){border-bottom:0}
+  .panels{grid-template-columns:1fr}
   .tst-row{grid-template-columns:1fr}
   h1{font-size:34px}
   h2{font-size:26px}
@@ -235,6 +290,11 @@ footer img{width:66px;height:auto;margin:0 auto 14px}
   .card-bd,.card-hd{padding-left:18px;padding-right:18px}
   .card-ft{padding-left:18px;padding-right:18px}
   .pbar div{font-size:11px}
+  .tiles{grid-template-columns:1fr}
+  .tile{border-right:0}
+  .tile:last-child{border-bottom:0}
+  .tr{grid-template-columns:minmax(0,1fr) 54px}
+  .tr .td-b{display:none}
   .plist li{padding-left:0;padding-top:56px}
   .plist li:before{top:14px}
 }
