@@ -199,6 +199,25 @@ the same thing instead of something about `id`. Restart and both go away.
 - **Mailer files → Reload from folder** picks up newly added CSVs without a
   restart.
 
+### Document Builder
+
+**Documents** in the header opens the Document Builder at
+`http://127.0.0.1:8322/docs`. It reads the same `desk/mailers` folder as the
+desk. Type a reference (`MI-04-093`), press **Look up & fill**, and the county,
+parcel address, offer price, acreage, APN and closing date come straight from
+the mailer file. Nothing needs uploading. If a reference was mailed more than
+once, the newest file wins, the same as on the card. Anything the file leaves
+blank is named on screen so you can fill it by hand.
+
+Every card also has a **Sales contract** button that opens the builder with
+that record already filled in.
+
+New CSVs in the folder show up after **Reload from folder**. The builder only
+reads the folder while the desk is running. Opened by double-clicking
+`desk/ui/docs.html` instead, it asks you to choose the `mailers` folder once
+(Chrome or Edge) and remembers it. **Use a different CSV instead** still takes
+a one-off file.
+
 ### What gets saved
 
 | | |
