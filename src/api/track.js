@@ -13,6 +13,12 @@
  * outlives the browser tab, so there is nothing here that can be turned back
  * into a person, and nothing that grows with traffic except the numbers.
  *
+ * Every page view is scored for how likely it is to be a bot (rules and lists
+ * in _bot-rules.js). A bot's counts go to the same fields prefixed "b:", so
+ * the dashboard shows people by default and bots only when asked. The signals
+ * behind the score -- screen size, timezone, time on page -- are used for that
+ * one decision and never stored.
+ *
  * Geography comes from Vercel's own edge headers (x-vercel-ip-country and
  * friends), which are derived from the IP address before the request reaches
  * this function. We read the city, we never read or keep the address itself.
@@ -36,6 +42,9 @@
 
 import net from "node:net";
 import tls from "node:tls";
+import {
+  THRESHOLD, WEIGHTS, REASONS, BLOCKED_COUNTRIES, DATA_CENTER_CITIES, AUTOMATION_WORDS,
+} from "./_bot-rules.js";
 
 const SITE_HOST = "gohometownland.com";
 const PREFIX = "htl:d:";           // one hash per day: htl:d:2026-09-21
@@ -55,8 +64,17 @@ const F = {
   city: "y|",
   device: "v|",
   campaign: "k|",
+  form: "f|",         // offer-form funnel: f|start, f|step2, f|step3
+  score: "q|",        // every scored view by bot score, in tens: q|0 ... q|100
+  reason: "w|",       // bots only: why, by the heaviest rule tripped
 };
 
+// A bot's counters live in the same day hash under this prefix -- b:views,
+// b:p|/about -- so the humans' fields keep their names and history.
+const BOT_PREFIX = "b:";
+
+// Words that give a crawler away, from before isbot was added. Still checked
+// alongside it, and on its own if the isbot package failed to install.
 const BOT = new RegExp([
   "bot", "crawl", "spider", "slurp", "search", "fetch", "monitor", "uptime",
   "pingdom", "lighthouse", "headless", "phantom", "curl", "wget", "python",
@@ -348,13 +366,98 @@ function header(req, name) {
   }
 }
 
+/* --------------------------------------------------------- bot scoring */
+
+// isbot is the maintained list of crawler user agents. Loaded lazily and
+// allowed to be missing, so a failed install costs accuracy, not the endpoint.
+let isbotFn;
+async function crawlerAgent(ua) {
+  if (isbotFn === undefined) {
+    try {
+      ({ isbot: isbotFn } = await import("isbot"));
+    } catch {
+      isbotFn = null;
+      console.warn("[track] isbot unavailable — falling back to the built-in pattern");
+    }
+  }
+  return BOT.test(ua) || (isbotFn ? isbotFn(ua) : false);
+}
+
+const AUTOMATION = new RegExp(AUTOMATION_WORDS.join("|"), "i");
+const BLOCKED = new Set(BLOCKED_COUNTRIES.map((c) => c.toUpperCase()));
+const DATA_CENTERS = new Set(DATA_CENTER_CITIES.map((c) => c.toLowerCase()));
+
+/** Minutes a timezone is ahead of UTC right now, or null for an unknown name. */
+function utcOffset(zone, at) {
+  try {
+    const local = new Date(at.toLocaleString("en-US", { timeZone: zone }));
+    const utc = new Date(at.toLocaleString("en-US", { timeZone: "UTC" }));
+    return Math.round((local - utc) / 60000);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Score one page view 0-100 against the rules in _bot-rules.js.
+ *
+ * Nothing that goes into the score is stored: the screen size, timezone and
+ * the rest are read, weighed and dropped. Only the verdict is counted.
+ *
+ * `hit.v` marks a beacon from the current site.js. Browsers can hold an older
+ * copy for a while, and that one sends none of the browser-side signals, so
+ * their absence is only held against a beacon that should have carried them.
+ */
+async function botScore(req, ua, hit, geo) {
+  const tripped = [];
+  const current = Number(hit.v) >= 2;
+
+  if (await crawlerAgent(ua)) tripped.push("crawlerAgent");
+  if (!ua.startsWith("Mozilla/") || AUTOMATION.test(ua)) tripped.push("automationAgent");
+  if (BLOCKED.has(geo.country)) tripped.push("country");
+  if (geo.country === "US" && DATA_CENTERS.has(`${geo.cityName}, ${geo.region}`.toLowerCase())) {
+    tripped.push("dataCenter");
+  }
+
+  if (current) {
+    if (hit.d === 1 || hit.d === "1") tripped.push("webdriver");
+
+    const w = Number(hit.w), h = Number(hit.h);
+    if (w === 0 || h === 0) tripped.push("noScreen");
+
+    const serverTz = header(req, "x-vercel-ip-timezone");
+    if (!hit.z) {
+      tripped.push("timezone");
+    } else if (serverTz) {
+      const now = new Date();
+      const a = utcOffset(String(hit.z).slice(0, 64), now);
+      const b = utcOffset(serverTz, now);
+      if (a === null || (b !== null && Math.abs(a - b) >= 180)) tripped.push("timezone");
+    }
+
+    const touched = hit.i === 1 || hit.i === "1";
+    const ms = Number(hit.t);
+    if (!touched && Number.isFinite(ms) && ms < 1000) tripped.push("bounce");
+
+    const touchedThisVisit = touched || hit.si === 1 || hit.si === "1";
+    if (Number(hit.sv) >= 5 && !touchedThisVisit) tripped.push("idleSession");
+  }
+
+  const score = Math.min(100, tripped.reduce((sum, rule) => sum + WEIGHTS[rule], 0));
+  const heaviest = tripped.sort((a, b) => WEIGHTS[b] - WEIGHTS[a])[0];
+  return { score, bot: score >= THRESHOLD, reason: heaviest ? REASONS[heaviest] : "" };
+}
+
+/* ------------------------------------------------------------ recording */
+
 async function record(req, res) {
   // A beacon is fire-and-forget: it never learns whether anything was stored,
   // and it never gets an error back to log in somebody's console.
   const done = () => res.status(204).end();
 
+  // Crawlers are no longer dropped here: they are scored below and counted
+  // in the bot column, so "Show bots" can say how much of the traffic they are.
   const ua = String(req.headers["user-agent"] || "");
-  if (!ua || BOT.test(ua)) return done();
 
   // Every branch gets its own preview URL on Vercel, and every preview shares
   // this Redis. Counting them would mix work-in-progress hits into the real
@@ -379,29 +482,51 @@ async function record(req, res) {
   const commands = [];
 
   if (body.e) {
-    // A named event rather than a page view. Only the one we send today.
-    if (label(body.e, 20) !== "lead") return done();
-    commands.push(bump(F.leads));
+    // A named event rather than a page view: the offer form's progress.
+    // Somebody filling in a form has already shown they are a person, so a
+    // crawler user agent is the only filter these get.
+    if (!ua || await crawlerAgent(ua)) return done();
+    const event = label(body.e, 20);
+    if (event === "lead") {
+      commands.push(bump(F.leads));
+    } else if (event === "form_start") {
+      commands.push(bump(F.form + "start"));
+    } else if (event === "form_step") {
+      const step = Number(body.step);
+      if (step !== 2 && step !== 3) return done();
+      commands.push(bump(F.form + `step${step}`));
+    } else {
+      return done();
+    }
   } else {
+    const geo = {
+      country: label(header(req, "x-vercel-ip-country"), 2).toUpperCase(),
+      region: label(header(req, "x-vercel-ip-country-region"), 3).toUpperCase(),
+      cityName: label(header(req, "x-vercel-ip-city"), 40),
+    };
+    const verdict = await botScore(req, ua, body, geo);
+    // A bot's counts go to the same fields under b:, a human's to the plain ones.
+    const as = verdict.bot ? BOT_PREFIX : "";
     const first = body.n === 1 || body.n === "1";
-    commands.push(bump(F.views));
-    commands.push(bump(F.path + cleanPath(body.p)));
+
+    commands.push(bump(F.score + Math.floor(verdict.score / 10) * 10));
+    commands.push(bump(as + F.views));
+    commands.push(bump(as + F.path + cleanPath(body.p)));
+    if (verdict.bot) commands.push(bump(BOT_PREFIX + F.reason + verdict.reason));
 
     if (first) {
-      const country = label(header(req, "x-vercel-ip-country"), 2).toUpperCase();
-      const region = label(header(req, "x-vercel-ip-country-region"), 3).toUpperCase();
-      const city = label(header(req, "x-vercel-ip-city"), 40);
+      const { country, region, cityName } = geo;
       const campaign = label(body.c, 40);
 
-      commands.push(bump(F.visits));
-      commands.push(bump(F.source + sourceOf(body.r, body.s, req.headers.host)));
-      commands.push(bump(F.device + deviceOf(ua)));
-      if (country) commands.push(bump(F.country + country));
-      if (country && region) commands.push(bump(F.region + `${country}-${region}`));
-      if (city) {
-        commands.push(bump(F.city + [city, region, country].filter(Boolean).join(", ")));
+      commands.push(bump(as + F.visits));
+      commands.push(bump(as + F.source + sourceOf(body.r, body.s, req.headers.host)));
+      commands.push(bump(as + F.device + deviceOf(ua)));
+      if (country) commands.push(bump(as + F.country + country));
+      if (country && region) commands.push(bump(as + F.region + `${country}-${region}`));
+      if (cityName) {
+        commands.push(bump(as + F.city + [cityName, region, country].filter(Boolean).join(", ")));
       }
-      if (campaign) commands.push(bump(F.campaign + campaign));
+      if (campaign) commands.push(bump(as + F.campaign + campaign));
     }
   }
 
@@ -485,7 +610,11 @@ async function report(req, res) {
   }
 
   const totals = { views: 0, visits: 0, leads: 0 };
+  const bots = { views: 0, visits: 0 };
   const groups = { pages: {}, sources: {}, countries: {}, regions: {}, cities: {}, devices: {}, campaigns: {} };
+  const botGroups = { reasons: {}, pages: {}, countries: {}, cities: {}, sources: {} };
+  const funnel = {};
+  const scores = {};
   const daily = [];
 
   dates.forEach((date, i) => {
@@ -493,10 +622,22 @@ async function report(req, res) {
     const views = day[F.views] || 0;
     const visits = day[F.visits] || 0;
     const leads = day[F.leads] || 0;
+    const botViews = day[BOT_PREFIX + F.views] || 0;
+    const botVisits = day[BOT_PREFIX + F.visits] || 0;
     totals.views += views;
     totals.visits += visits;
     totals.leads += leads;
-    daily.push({ date, views, visits, leads });
+    bots.views += botViews;
+    bots.visits += botVisits;
+    daily.push({ date, views, visits, leads, botViews, botVisits });
+
+    collect(funnel, day, F.form);
+    collect(scores, day, F.score);
+    collect(botGroups.reasons, day, BOT_PREFIX + F.reason);
+    collect(botGroups.pages, day, BOT_PREFIX + F.path);
+    collect(botGroups.countries, day, BOT_PREFIX + F.country);
+    collect(botGroups.cities, day, BOT_PREFIX + F.city);
+    collect(botGroups.sources, day, BOT_PREFIX + F.source);
 
     collect(groups.pages, day, F.path);
     collect(groups.sources, day, F.source);
@@ -514,6 +655,22 @@ async function report(req, res) {
     from: dates[0],
     to: dates[dates.length - 1],
     totals,
+    // Days before bot scoring was added have no b: fields, so their human
+    // counts still include whatever bots the old user-agent check missed.
+    bots,
+    funnel: {
+      starts: funnel.start || 0,
+      step2: funnel.step2 || 0,
+      step3: funnel.step3 || 0,
+      submits: totals.leads,
+    },
+    scores: Array.from({ length: 11 }, (_, k) => ({ name: String(k * 10), count: scores[k * 10] || 0 })),
+    threshold: THRESHOLD,
+    botReasons: ranked(botGroups.reasons),
+    botPages: ranked(botGroups.pages),
+    botCountries: ranked(botGroups.countries),
+    botCities: ranked(botGroups.cities),
+    botSources: ranked(botGroups.sources),
     daily,
     pages: ranked(groups.pages),
     sources: ranked(groups.sources),

@@ -253,6 +253,11 @@ footer img{width:66px;height:auto;margin:0 auto 14px}
 .sw{display:inline-block;width:11px;height:11px;margin-right:6px;vertical-align:-1px}
 .sw-view{background:var(--rule)}
 .sw-visit{background:var(--g-600)}
+.sw-bot{background:#C98A5B}
+.chart .bar b{position:absolute;left:0;width:100%;background:#C98A5B}
+.botswitch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--navy-700);
+  padding-bottom:9px;cursor:pointer;white-space:nowrap}
+.botswitch input{width:auto;margin:0}
 
 .tbl{display:flex;flex-direction:column}
 .tr{display:grid;grid-template-columns:minmax(0,1fr) 90px 62px;align-items:center;

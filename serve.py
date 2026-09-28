@@ -33,7 +33,9 @@ def sample_traffic(days):
         v = rnd.randint(8, 70)
         s = max(1, int(v / rnd.uniform(1.3, 2.4)))
         ld = 1 if rnd.random() < 0.18 else 0
-        daily.append({"date": d, "views": v, "visits": s, "leads": ld})
+        bv = rnd.randint(5, 60)
+        daily.append({"date": d, "views": v, "visits": s, "leads": ld,
+                      "botViews": bv, "botVisits": max(1, bv // 2)})
         views, visits, leads = views + v, visits + s, leads + ld
 
     def rows(pairs):
@@ -48,6 +50,20 @@ def sample_traffic(days):
         "to": dates[-1],
         "totals": {"views": views, "visits": visits, "leads": leads},
         "daily": daily,
+        "bots": {"views": sum(d["botViews"] for d in daily),
+                 "visits": sum(d["botVisits"] for d in daily)},
+        "funnel": {"starts": leads * 4 + 2, "step2": leads * 3 + 1,
+                   "step3": leads * 2 + 1, "submits": leads},
+        "threshold": 50,
+        "scores": rows([(str(k * 10), c) for k, c in
+                        enumerate([visits, 40, 12, 9, 3, 30, 8, 14, 5, 2, 25])]),
+        "botReasons": rows([("Data-center city", 44), ("Known crawler", 25),
+                            ("Left in under a second", 12), ("Country outside the market", 7)]),
+        "botCities": rows([("Ashburn, VA, US", 31), ("Council Bluffs, IA, US", 13),
+                           ("Moscow, MOW, RU", 5)]),
+        "botCountries": rows([("US", 70), ("RU", 5), ("CN", 2)]),
+        "botPages": rows([("/", 60), ("/faq", 9), ("/about", 6)]),
+        "botSources": rows([("Direct / typed in", 70)]),
         "sources": rows([("Google", int(share * .42)), ("Direct / typed in", int(share * .31)),
                          ("Facebook", int(share * .12)), ("Bing", int(share * .08)),
                          ("landwatch.com", int(share * .04))]),

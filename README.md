@@ -138,9 +138,26 @@ Every page beacons to `POST /api/track`, which adds 1 to a handful of fields in
 a per-day Redis hash. **Counters only**: no row per visitor, no IP address, no
 cookie, no identifier outliving the tab. Geography comes from Vercel's own
 `x-vercel-ip-*` edge headers, so it is accurate to the city at best and wrong
-for anyone on a VPN. Known crawlers, `Do Not Track` browsers, the dashboard
-itself and every preview deployment are all left out, which means the true
-figures run slightly above what is shown.
+for anyone on a VPN. `Do Not Track` browsers, the dashboard itself and every
+preview deployment are left out, which means the true figures run slightly
+above what is shown.
+
+**Bots are scored, not dropped.** The beacon waits until the page has been read
+(first scroll, tap or key, ten seconds on screen, or the tab closing) and sends
+a few signals with it: screen size, timezone, `navigator.webdriver`, time on
+page, and whether this visit has touched anything yet. `/api/track` adds up the
+rules in `src/api/_bot-rules.js` — the `isbot` package, automation user agents,
+scripted browsers, RU/CN/KP/IR, data-center towns (Ashburn VA, Council Bluffs
+IA, …), no screen, a timezone 3+ hours off the connection's, leaving in under a
+second, five pages without a single interaction — and a score of 50 or more is
+counted under `b:` fields instead of the normal ones. `/stats` hides them until
+**Show bots** is ticked, which adds bot page views to the chart, a "why they
+were marked as bots" breakdown, and every view by score for tuning. Edit the
+lists and weights in `_bot-rules.js`; nothing else needs touching. Days
+recorded before this went in cannot be separated after the fact.
+
+The offer form reports its progress too: first field touched, step 2, step 3,
+sent. `/stats` shows that funnel and the start-to-sent rate.
 
 Two things switch it on:
 
@@ -152,7 +169,7 @@ Two things switch it on:
 2. **`TRAFFIC_KEY`.** Any long random string; it is the dashboard password.
    Generate one with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
 
-Roughly 3 Redis commands per page view, 10 on the first page of a visit — a few
+Roughly 4 Redis commands per page view (5 for a bot), 11 on the first page of a visit — a few
 thousand views a day fits inside a free Upstash plan. Days expire after 400
 days on their own.
 
