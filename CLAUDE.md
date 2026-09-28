@@ -115,7 +115,12 @@ Desk relay uses and accepts the same variable names, so a project set up for
 the desk needs nothing added. No store means nothing is recorded and the
 dashboard says so rather than showing zeros.
 
-Deliberately not counted, so do not treat any of these as a bug: crawlers,
+Bots are scored by the rules in `src/api/_bot-rules.js` and counted apart
+under `b:` fields; `/stats` hides them unless "Show bots" is ticked. A visit
+from a data-center town (Ashburn VA, Council Bluffs IA, …) is a bot by
+definition, even if it scrolls — that is deliberate.
+
+Deliberately not counted, so do not treat any of these as a bug:
 browsers sending Do Not Track, the `/stats` page itself, and every host that is
 not `gohometownland.com` — which is what keeps preview deploys out of the real
 numbers, and also why the beacon appears to do nothing on a preview URL.

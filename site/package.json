@@ -5,5 +5,8 @@
   "type": "module",
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "isbot": "^5.2.2"
   }
 }

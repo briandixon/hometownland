@@ -14,6 +14,7 @@
   var keyInput = document.getElementById("keyInput");
   var keyMsg = document.getElementById("keyMsg");
   var rangeSel = document.getElementById("rangeSel");
+  var botToggle = document.getElementById("botToggle");
   var latest = null;
 
   function remembered() {
@@ -70,7 +71,7 @@
       box.appendChild(el("p", "note", empty));
       return box;
     }
-    var top = rows[0].count || 1;
+    var top = rows.reduce(function (m, r) { return Math.max(m, r.count); }, 0) || 1;
     var list = el("div", "tbl");
     rows.forEach(function (r) {
       var row = el("div", "tr");
@@ -87,21 +88,32 @@
     return box;
   }
 
-  function drawChart(daily) {
+  /* Each day is one bar: people's page views, their visits drawn inside it,
+     and with "Show bots" on, the bots' page views stacked on top. */
+  function drawChart(daily, withBots) {
     var chart = document.getElementById("chart");
     chart.textContent = "";
-    var peak = daily.reduce(function (m, d) { return Math.max(m, d.views); }, 0) || 1;
+    function total(d) { return d.views + (withBots ? d.botViews || 0 : 0); }
+    var peak = daily.reduce(function (m, d) { return Math.max(m, total(d)); }, 0) || 1;
 
     daily.forEach(function (d) {
       var col = el("div", "col");
+      var all = total(d);
       col.title = shortDate(d.date) + ": " + num(d.views) + " views, "
                 + num(d.visits) + " visits"
-                + (d.leads ? ", " + num(d.leads) + " offer requests" : "");
+                + (d.leads ? ", " + num(d.leads) + " offer requests" : "")
+                + (withBots ? "; bots: " + num(d.botViews) + " views" : "");
       var bar = el("span", "bar");
-      bar.style.height = Math.max(1, Math.round((d.views / peak) * 100)) + "%";
+      bar.style.height = Math.max(1, Math.round((all / peak) * 100)) + "%";
       var inner = el("i");
-      inner.style.height = d.views ? Math.round((d.visits / d.views) * 100) + "%" : "0";
+      inner.style.height = all ? Math.round((d.visits / all) * 100) + "%" : "0";
       bar.appendChild(inner);
+      if (withBots && d.botViews) {
+        var bots = el("b");
+        bots.style.top = "0";
+        bots.style.height = Math.round((d.botViews / all) * 100) + "%";
+        bar.appendChild(bots);
+      }
       col.appendChild(bar);
       chart.appendChild(col);
     });
@@ -122,22 +134,36 @@
     say("");
 
     var t = data.totals;
+    var f = data.funnel || { starts: 0, step2: 0, step3: 0, submits: t.leads };
+    var b = data.bots || { views: 0, visits: 0 };
+    var withBots = botToggle.checked;
     var perVisit = t.visits ? (t.views / t.visits).toFixed(1) : "0";
     var rate = t.visits ? ((t.leads / t.visits) * 100).toFixed(1) + "%" : "—";
+    var finish = f.starts ? Math.round((f.submits / f.starts) * 100) + "%" : "—";
 
     var tiles = document.getElementById("tiles");
     tiles.textContent = "";
-    tiles.appendChild(tile("Visits", num(t.visits), "people, counted once per session"));
-    tiles.appendChild(tile("Page views", num(t.views), perVisit + " pages per visit"));
-    tiles.appendChild(tile("Offer requests", num(t.leads), "forms submitted"));
-    tiles.appendChild(tile("Requests per visit", rate, "of visits ended in a form"));
+    tiles.appendChild(tile("Visits", num(t.visits),
+      withBots ? "people; plus " + num(b.visits) + " by bots" : "people, counted once per session"));
+    tiles.appendChild(tile("Page views", num(t.views),
+      withBots ? "by people; plus " + num(b.views) + " by bots" : perVisit + " pages per visit"));
+    tiles.appendChild(tile("Offer requests", num(t.leads), rate + " of visits"));
+    tiles.appendChild(tile("Form finished", finish,
+      num(f.starts) + " started it, " + num(f.submits) + " sent it"));
 
+    document.querySelectorAll(".bot-only").forEach(function (n) { n.hidden = !withBots; });
     var old = document.querySelector(".chart-ends");
     if (old) old.remove();
-    drawChart(data.daily);
+    drawChart(data.daily, withBots);
 
     var panels = document.getElementById("panels");
     panels.textContent = "";
+    panels.appendChild(panel("The offer form", f.starts || f.submits ? [
+      { name: "Started filling it in", count: f.starts },
+      { name: "Reached step 2", count: f.step2 },
+      { name: "Reached step 3", count: f.step3 },
+      { name: "Sent", count: f.submits }
+    ] : [], "Nobody has started the form in this period."));
     panels.appendChild(panel("Where visits came from", data.sources,
       "Nothing recorded yet."));
     panels.appendChild(panel("Pages read", data.pages,
@@ -154,12 +180,32 @@
       panels.appendChild(panel("Campaigns", data.campaigns, ""));
     }
 
+    if (withBots) {
+      panels.appendChild(panel("Why they were marked as bots", data.botReasons,
+        "No bots recorded in this period."));
+      panels.appendChild(panel("Bot cities", data.botCities, "None."));
+      panels.appendChild(panel("Bot countries", data.botCountries, "None."));
+      panels.appendChild(panel("Pages bots loaded", data.botPages, "None."));
+      var scores = (data.scores || []).filter(function (r) { return r.count; })
+        .map(function (r) {
+          var lo = Number(r.name);
+          return { name: "Score " + lo + (lo < 100 ? "–" + (lo + 9) : "")
+                   + (lo >= (data.threshold || 50) ? " (bot)" : ""), count: r.count };
+        });
+      /* Kept in score order, not by size, so the threshold reads as a line. */
+      panels.appendChild(panel("Every page view by bot score", scores, "Nothing scored yet."));
+    }
+
     document.getElementById("dashFoot").textContent =
       "Covering " + data.from + " through " + data.to + " (Eastern time), from the "
       + data.store + " store. A visit is one browser session; geography comes from the "
       + "network location of the connection, so it is accurate to the city at best and "
-      + "wrong for anyone on a VPN. Known crawlers and visitors who ask not to be "
-      + "tracked are not counted, so the real figures are a little higher than these.";
+      + "wrong for anyone on a VPN. Bots are scored on their browser, location and "
+      + "behaviour and kept apart from these numbers; that includes visits from "
+      + "data-center towns such as Ashburn VA and Council Bluffs IA, and anyone who "
+      + "left in under a second without touching the page. Days before bot scoring "
+      + "began still have some bots mixed in. Visitors who ask not to be tracked are "
+      + "not counted, so the real figures are a little higher than these.";
   }
 
   function load() {
@@ -204,13 +250,15 @@
   /* A CSV of what is on screen, for a spreadsheet or for sending on. */
   function csv() {
     if (!latest) return;
-    var lines = [["Date", "Visits", "Page views", "Offer requests"].join(",")];
+    var lines = [["Date", "Visits", "Page views", "Offer requests",
+                  "Bot visits", "Bot page views"].join(",")];
     latest.daily.forEach(function (d) {
-      lines.push([d.date, d.visits, d.views, d.leads].join(","));
+      lines.push([d.date, d.visits, d.views, d.leads, d.botVisits || 0, d.botViews || 0].join(","));
     });
     [["Source", "sources"], ["Page", "pages"], ["Region", "regions"],
      ["City", "cities"], ["Country", "countries"], ["Device", "devices"],
-     ["Campaign", "campaigns"]].forEach(function (pair) {
+     ["Campaign", "campaigns"], ["Bot reason", "botReasons"],
+     ["Bot city", "botCities"], ["Bot country", "botCountries"]].forEach(function (pair) {
       var rows = latest[pair[1]] || [];
       if (!rows.length) return;
       lines.push("");
@@ -240,6 +288,7 @@
   });
 
   rangeSel.addEventListener("change", load);
+  botToggle.addEventListener("change", function () { if (latest) render(latest); });
   document.getElementById("csvBtn").addEventListener("click", csv);
   document.getElementById("forgetBtn").addEventListener("click", function () {
     remember("");

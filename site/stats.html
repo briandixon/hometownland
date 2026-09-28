@@ -44,7 +44,7 @@
 <div class="pagehead"><div class="wrap">
   <div class="rule"></div>
   <h1>Traffic</h1>
-  <p>How many people came to the site, where they came from, and what they read.</p>
+  <p>How many people came to the site, where they came from, and what they read. Bots are left out unless you ask for them.</p>
 </div></div>
 
 <section>
@@ -69,12 +69,14 @@
         <div class="fld">
           <label for="rangeSel">Showing</label>
           <select id="rangeSel">
-            <option value="7">The last 7 days</option>
-            <option value="30" selected>The last 30 days</option>
+            <option value="1">Today</option>
+            <option value="7" selected>The last 7 days</option>
+            <option value="30">The last 30 days</option>
             <option value="90">The last 90 days</option>
             <option value="120">The last 120 days</option>
           </select>
         </div>
+        <label class="botswitch"><input type="checkbox" id="botToggle"> Show bots</label>
         <div class="dashbar-act">
           <button class="backlink" type="button" id="csvBtn">Download CSV</button>
           <button class="backlink" type="button" id="forgetBtn">Forget key</button>
@@ -89,6 +91,7 @@
         <div class="legend">
           <span><i class="sw sw-view"></i> Page views</span>
           <span><i class="sw sw-visit"></i> Visits</span>
+          <span class="bot-only" hidden><i class="sw sw-bot"></i> Bot page views</span>
         </div>
       </div>
 

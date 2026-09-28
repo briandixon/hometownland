@@ -2,5 +2,6 @@ User-agent: *
 Allow: /
 Disallow: /thank-you
 Disallow: /stats
+Disallow: /api/
 
 Sitemap: https://www.gohometownland.com/sitemap.xml

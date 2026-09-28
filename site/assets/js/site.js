@@ -3,9 +3,16 @@
 /* Traffic beacon.
    Tells /api/track that a page was read. Aggregate counts only: no cookie, no
    identifier, nothing that outlives the browser tab. The one thing kept per
-   visit is a sessionStorage flag saying "this tab has already been counted",
+   visit is a sessionStorage marker saying "this tab has already been counted",
    so a person reading four pages is one visit rather than four.
-   A visitor sending Do Not Track is not counted at all. */
+   A visitor sending Do Not Track is not counted at all.
+
+   The beacon waits until the page has been read before it goes: the first
+   scroll, tap, click or key, ten seconds on screen, or the tab being hidden,
+   whichever comes first. What it carries alongside the page -- screen size,
+   timezone, whether the browser is being driven by a script, how long the page
+   was open -- is what the server uses to tell a person from a headless
+   browser. It is scored there and thrown away; only the verdict is counted. */
 (function () {
   "use strict";
 
@@ -36,29 +43,72 @@
   var dnt = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
   if (dnt === "1" || dnt === "yes") return;
 
-  /* Is this the first page of this visit? sessionStorage is per tab and is
-     emptied when the tab closes. Where it is unavailable — private modes block
-     it — fall back to "did they arrive from somewhere other than this site". */
-  var first;
+  /* The visit marker, "pages|touched": how many pages this tab has shown and
+     whether any of them was scrolled, clicked or typed in. sessionStorage is
+     per tab and emptied when the tab closes. Where it is unavailable -- private
+     modes block it -- fall back to "did they arrive from somewhere other than
+     this site", and go without the page count. */
+  var MARK = "htl.seen";
+  var pages = 0, touchedBefore = false, first;
   try {
-    first = !sessionStorage.getItem("htl.seen");
-    if (first) sessionStorage.setItem("htl.seen", "1");
+    var mark = (sessionStorage.getItem(MARK) || "").split("|");
+    first = !mark[0];
+    pages = (parseInt(mark[0], 10) || 0) + 1;
+    touchedBefore = mark[1] === "1";
   } catch (e) {
     first = document.referrer.indexOf(location.origin) !== 0;
   }
+  function saveMark(touched) {
+    try { sessionStorage.setItem(MARK, pages + "|" + (touched || touchedBefore ? 1 : 0)); } catch (e) {}
+  }
+  saveMark(false);
 
   var q = new URLSearchParams(location.search);
-  post({
-    p: location.pathname,
-    r: document.referrer,
-    s: q.get("utm_source") || q.get("ref") || "",
-    c: q.get("utm_campaign") || "",
-    n: first ? 1 : 0
-  });
+  var opened = Date.now();
+  var sent = false;
+  var tz = "";
+  try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (e) {}
 
-  /* Named events. Only one today: a submitted offer request, so the dashboard
-     can put leads next to the traffic that produced them. */
-  window.htlEvent = function (name) { post({ e: name }); };
+  function send(touched) {
+    if (sent) return;
+    sent = true;
+    post({
+      v: 2,
+      p: location.pathname,
+      r: document.referrer,
+      s: q.get("utm_source") || q.get("ref") || "",
+      c: q.get("utm_campaign") || "",
+      n: first ? 1 : 0,
+      w: screen.width || 0,
+      h: screen.height || 0,
+      z: tz,
+      d: navigator.webdriver ? 1 : 0,
+      t: Date.now() - opened,
+      i: touched ? 1 : 0,
+      sv: pages,
+      si: touchedBefore ? 1 : 0
+    });
+  }
+
+  /* Remembered for the visit even when it comes after the beacon has gone. */
+  function touched() { saveMark(true); send(true); }
+  ["scroll", "pointerdown", "keydown", "touchstart"].forEach(function (type) {
+    addEventListener(type, touched, { once: true, passive: true, capture: true });
+  });
+  setTimeout(function () {
+    if (document.visibilityState !== "hidden") send(false);
+  }, 10000);
+  function hidden() { if (document.visibilityState === "hidden") send(false); }
+  document.addEventListener("visibilitychange", hidden);
+  addEventListener("pagehide", function () { send(false); });
+
+  /* Named events: the offer form's progress and a submitted request, so the
+     dashboard can show where people drop out of the form. */
+  window.htlEvent = function (name, extra) {
+    var payload = { e: name };
+    if (extra) for (var k in extra) payload[k] = extra[k];
+    post(payload);
+  };
 })();
 
 /* Multi-step offer form.
@@ -75,7 +125,19 @@
   var errBox = document.getElementById("formErr");
   var submitBtn = document.getElementById("submitBtn");
 
+  /* Funnel events: the first time anybody types in or picks from the form,
+     and the first time each later step is reached. */
+  var reached = {};
+  function track(name, step) {
+    var id = name + (step || "");
+    if (reached[id] || !window.htlEvent) return;
+    reached[id] = true;
+    window.htlEvent(name, step ? { step: step } : null);
+  }
+  form.addEventListener("focusin", function () { track("form_start"); });
+
   function show(n) {
+    if (Number(n) > 1) track("form_step", Number(n));
     steps.forEach(function (s) { s.classList.toggle("on", s.getAttribute("data-s") === n); });
     pips.forEach(function (p) { p.classList.toggle("on", p.getAttribute("data-p") === n); });
     var card = document.getElementById("offer");
