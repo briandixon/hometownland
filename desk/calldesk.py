@@ -46,7 +46,7 @@ POLL_SECONDS = 2.0
 # stays as it was when the window was opened. Pulling an update and not
 # restarting therefore runs a new page against an old server, and the first
 # symptom is a reply missing a field the page is sure is there.
-DESK_VERSION = "2026.09.17"
+DESK_VERSION = "2026.09.28"
 
 # Land Portal returns a lot; these are the fields the card actually shows.
 LP_FIELDS = (
@@ -438,6 +438,7 @@ class Library:
         self.by_phone = {}
         self.by_ref = {}
         self.index = []
+        self.rows = []
         self.loaded_at = 0.0
 
     def load(self):
@@ -447,6 +448,10 @@ class Library:
         paths = sorted(MAILERS.glob("*.csv"), key=lambda p: p.stat().st_mtime)
 
         files, leads, by_phone, by_ref, index = [], [], {}, {}, []
+        # Every row with a reference, with all of its columns, oldest file
+        # first: the Document Builder fills a contract from these and, like
+        # the card, lets the newest campaign win.
+        ref_rows = []
         for path in paths:
             try:
                 with path.open(encoding="utf-8-sig", newline="") as fh:
@@ -470,12 +475,17 @@ class Library:
                 ref = lead["ref"].upper().replace(" ", "")
                 if ref:
                     by_ref[ref] = lead
+                    row = {str(k).strip(): str(v or "").strip()
+                           for k, v in raw.items() if k is not None}
+                    row["Source File"] = path.name
+                    ref_rows.append(row)
 
             files.append({"name": path.name, "records": len(rows), "reachable": reachable})
 
         self.files, self.leads = files, leads
         self.by_phone, self.by_ref = by_phone, by_ref
         self.index = index
+        self.rows = ref_rows
         self.loaded_at = time.time()
         return self
 
@@ -801,6 +811,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._file("index.html")
         if route in ("/app.js", "/app.css"):
             return self._file(route.lstrip("/"))
+        if route in ("/docs", "/docs.html"):
+            return self._file("docs.html")
+
+        if route == "/api/docs/rows":         # the Document Builder's lookup
+            if q.get("reload", [""])[0]:
+                self.library.load()
+                log.info(f"reloaded {len(self.library.leads)} records "
+                         f"from {len(self.library.files)} file(s)")
+            return self._send(200, {
+                "version": DESK_VERSION,
+                "folder": str(MAILERS),
+                "files": self.library.files,
+                "rows": self.library.rows,
+            })
 
         if route == "/api/state":
             return self._send(200, self.line.snapshot())

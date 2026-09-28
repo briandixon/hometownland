@@ -20,7 +20,7 @@
      the failure that produces is baffling: a reply arrives, looks fine, and
      is missing a field this page is certain is there. Rather than let that
      surface as a stray TypeError, the two say their version to each other. */
-  var UI_VERSION = "2026.09.17";
+  var UI_VERSION = "2026.09.28";
   var stale = false;       // true once the server has answered with another one
 
   /* ---------- telling the desk what went wrong here ----------
@@ -263,6 +263,10 @@
 
     var alts = (lead.phones || []).filter(function (p) { return !phone || p.num !== phone.num; });
     var best = phone || (lead.phones || [])[0];
+    // Opens the Document Builder with this record's contract already filled.
+    var contract = lead.ref
+      ? '<a class="act" href="/docs?ref=' + encodeURIComponent(lead.ref) + '" target="_blank" rel="noopener">Sales contract</a>'
+      : "";
 
     var strip = kind === "call"
       ? '<div class="strip" id="strip">' +
@@ -274,6 +278,7 @@
           '<span class="strip-acts">' +
             '<button class="act pri" id="answer" type="button">Answer</button>' +
             '<button class="act end" id="hangup" type="button">Hang up</button>' +
+            contract +
           "</span></div>"
       : '<div class="strip answered" id="strip">' +
           '<span class="lamp"></span>' +
@@ -282,6 +287,7 @@
           '<span class="strip-via">looked up by hand · ' + esc(lead.source || "") + "</span>" +
           '<span class="strip-acts">' +
             (best ? '<a class="act pri" href="tel:+1' + esc(best.num) + '">Call ' + esc(fmtPhone(best.num)) + "</a>" : "") +
+            contract +
             '<button class="act" id="clearbtn" type="button">Clear</button>' +
           "</span></div>";
 
