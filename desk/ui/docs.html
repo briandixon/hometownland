@@ -298,9 +298,9 @@ const TEMPLATES = [
       </div>`,
     // how to pull each field out of a data-file row (raw values; formatting applied later)
     lookup: {
-      refKeys: ["reference"],
+      refKeys: ["reference","ref","referencenumber","refno"],
       resolve: {
-        Reference:    ["reference"],
+        Reference:    ["reference","ref","referencenumber","refno"],
         County:       ["parcelcounty","county"],
         SitusSt:      row => composeSitus(row),
         OfferPrice:   ["offerprice","price","purchaseprice"],
@@ -434,7 +434,7 @@ function rowsToObjects(text){
   const objects=[];
   for(let r=1;r<rows.length;r++){
     const o={};
-    headers.forEach((h,ci)=>{ if(h && o[h]===undefined) o[h]=rows[r][ci]!=null?rows[r][ci]:""; });
+    headers.forEach((h,ci)=>{ if(h && !String(o[h]??"").trim()) o[h]=rows[r][ci]!=null?rows[r][ci]:""; });   // repeated column: first non-empty copy
     objects.push(o);
   }
   return {headers,objects};
@@ -598,7 +598,7 @@ function setSource(html, buttons){
   $("srcPick").classList.toggle("hidden",!b.pick);
 }
 function objectsFromRows(rows){
-  return rows.map(r=>{ const o={}; Object.keys(r).forEach(k=>{ const h=normalizeHeader(k); if(h && o[h]===undefined) o[h]=r[k]; }); return o; });
+  return rows.map(r=>{ const o={}; Object.keys(r).forEach(k=>{ const h=normalizeHeader(k); if(h && !String(o[h]??"").trim()) o[h]=r[k]; }); return o; });
 }
 function plural(n,w){return n+" "+w+(n===1?"":"s");}
 function loadedText(count, dupes, nfiles, folder){

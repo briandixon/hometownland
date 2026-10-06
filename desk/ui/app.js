@@ -251,7 +251,7 @@
     var parcelLine = [lead.pAddr, lead.pCity, lead.pState + " " + lead.pZip].filter(Boolean).join(", ");
     var mailLine = [lead.mAddr, lead.mCity, lead.mState + " " + lead.mZip].filter(Boolean).join(", ");
     var absentee = (lead.mCity || "").toLowerCase() !== (lead.pCity || "").toLowerCase();
-    var max = Math.max(lead.retail || 0, lead.tlp || 0, lead.offer || 0) || 1;
+    var max = Math.max(lead.retail || 0, lead.retailFull || 0, lead.tlp || 0, lead.offer || 0) || 1;
     parcel = parcel || {};
 
     var badges = "";
@@ -331,7 +331,8 @@
         '<div class="coltag">The numbers<span class="src-pill">Mailer file</span></div>' +
         '<div class="heroes">' +
           '<div class="hero offer"><div class="k">Offer price</div><div class="v">' + esc(usd0(lead.offer)) +
-            '</div><div class="s">' + esc(usd0(lead.offerPPA)) + " / acre</div></div>" +
+            '</div><div class="s">' + esc(usd0(lead.offerPPA)) + " / acre" +
+            (lead.ppaPct ? " · " + esc(Math.round(lead.ppaPct * 100)) + "% of market" : "") + "</div></div>" +
           '<div class="hero tlp"><div class="k">TLP estimate</div><div class="v">' + esc(usd0(lead.tlp)) +
             '</div><div class="s">offer is ' + esc(pct(lead.offer, lead.tlp)) + " of TLP</div></div>" +
         "</div>" +
@@ -345,6 +346,7 @@
             '<div class="lg"><span class="sw" style="background:var(--live)"></span><span class="n">Your offer <span style="color:var(--text-faint)">as mailed</span></span><span class="amt">' + esc(usd(lead.offer)) + '</span><span class="pc">' + esc(pct(lead.offer, max)) + "</span></div>" +
             '<div class="lg"><span class="sw" style="background:var(--portal)"></span><span class="n">TLP estimate</span><span class="amt">' + esc(usd(lead.tlp)) + '</span><span class="pc">' + esc(pct(lead.tlp, max)) + "</span></div>" +
             '<div class="lg"><span class="sw" style="background:var(--text-faint)"></span><span class="n">Retail (90%)</span><span class="amt">' + esc(usd(lead.retail)) + '</span><span class="pc">' + esc(pct(lead.retail, max)) + "</span></div>" +
+            (lead.retailFull ? '<div class="lg"><span class="sw" style="background:var(--text-faint)"></span><span class="n">Retail (full)</span><span class="amt">' + esc(usd(lead.retailFull)) + '</span><span class="pc">' + esc(pct(lead.retailFull, max)) + "</span></div>" : "") +
           "</div>" +
         "</div>" +
         '<div class="stats">' +

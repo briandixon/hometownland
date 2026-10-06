@@ -8,3 +8,8 @@ modified date wins, so you quote the offer you actually mailed last.
 
 Nothing in this folder is ever uploaded anywhere, and everything except this
 README is ignored by git so it cannot reach the public website repository.
+
+Columns are found by header name, not position, so files can order them
+differently. Spacing, capitals and punctuation in headers don't matter
+(" Offer Price " = "Offer Price"), "ref" is read as "Reference", and when a
+column appears twice the first copy with a value is used.

@@ -231,9 +231,18 @@ def _money(v):
 
 def _num(v):
     try:
-        return float(str(v or "").strip())
+        return float(re.sub(r"[,\s]", "", str(v or "")))
     except ValueError:
         return None
+
+
+def _pct(v):
+    """ "48%", "0.48" or "48" -> 0.48."""
+    text = str(v or "").strip()
+    n = _num(text.rstrip("%"))
+    if n is None:
+        return None
+    return round(n / 100 if text.endswith("%") or n > 1 else n, 4)
 
 
 def ten_digits(raw):
@@ -289,19 +298,75 @@ PHONE_COLUMNS = [
 ]
 
 
-def map_row(row, source):
-    """One mailer row to the shape the card renders.
+def header_key(name):
+    """A header folded so spelling drift does not matter.
 
-    Headers are matched after stripping whitespace: the export ships some
-    columns padded (" Real PPA ", " TLP Estimate "), and matching the padded
-    spelling silently yields nothing.
+    The exports pad some headers (" Offer Price ", "  TLP Estimate  "), vary
+    case, and punctuate them loosely ("Retail Value- 90%"), so every header --
+    and every name looked up -- is reduced to lowercase letters and digits.
+    The Document Builder folds headers the same way.
     """
-    g = lambda name: str(row.get(name, "") or "").strip()  # noqa: E731
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+# Other spellings seen (or likely) for the same column, keyed by the name
+# map_row asks for. The first header present with a value wins.
+ALIASES = {
+    "Reference": ["Ref", "Reference #", "Ref #", "Reference Number", "Ref No"],
+    "Offer Price": ["Offer", "Offer Amount"],
+    "Offer PPA": ["Offer Price Per Acre", "Offer $/Acre", "Offer Per Acre"],
+    "Real PPA": ["Market PPA", "Market Price Per Acre", "Market $/Acre", "PPA"],
+    "Retail Value- 90%": ["Retail Value 90", "Retail 90%", "Retail Value (90%)"],
+    "Retail Value": ["Full Retail Value", "Retail"],
+    "Profit": ["Projected Profit", "Est Profit", "Estimated Profit"],
+    "TLP Estimate": ["TLP", "TLP Value"],
+    "PPA Calc %": ["PPA Calc", "PPA %"],
+    "Lot Acres": ["Acres", "Lot Acreage"],
+    "Mail Names": ["Mail Name"],
+    "Owner Name(s)": ["Owner Names", "Owner Name", "Owner"],
+    "Mailer #": ["Mailer", "Mailer Number"],
+}
+
+
+def fold_row(headers, values):
+    """One CSV row as {folded header: first non-empty value}.
+
+    Files repeat columns ("Phone" twice, "TLP Estimate" at both ends) and a
+    plain dict keeps only the last copy, which may be the blank one, so the
+    first copy that actually holds something is kept instead.
+    """
+    out = {}
+    for key, val in zip(headers, values):
+        if not key:
+            continue
+        if not out.get(key):
+            out[key] = str(val or "").strip()
+    return out
+
+
+def getter(folded):
+    def g(name):
+        for n in (name, *ALIASES.get(name, ())):
+            val = folded.get(header_key(n), "")
+            if val:
+                return val
+        return ""
+    return g
+
+
+def map_row(folded, source):
+    """One mailer row (from fold_row) to the shape the card renders.
+
+    Columns are found by name, never by position, and names are compared
+    folded (see header_key), so each campaign file can order and pad its
+    columns however the spreadsheet left them.
+    """
+    g = getter(folded)
 
     phones = []
     for label, col in PHONE_COLUMNS:
         num = ten_digits(g(col))
-        if num:
+        if num and all(p["num"] != num for p in phones):
             phones.append({
                 "label": label,
                 "num": num,
@@ -309,12 +374,19 @@ def map_row(row, source):
                 "dnc": bool(g(f"{col} (DNC)")),
             })
 
+    # The slimmer exports have no "Mail Names"; greet the first owner by
+    # name rather than reading out "Morris Wayne K, Morris Katalin".
+    greet = g("Mail Names")
+    if not greet and g("Owner 1 Last Name"):
+        greet = f'{g("Owner 1 First Name")} {g("Owner 1 Last Name")}'.strip()
+
     return {
         "ref": g("Reference"), "mailer": g("Mailer #"), "source": source,
-        "owner": g("Owner Name(s)"), "greet": g("Mail Names"),
+        "owner": g("Owner Name(s)"), "greet": greet,
         "phones": phones, "email": g("Email"),
         "offer": _money(g("Offer Price")), "offerPPA": _money(g("Offer PPA")),
         "realPPA": _money(g("Real PPA")), "retail": _money(g("Retail Value- 90%")),
+        "retailFull": _money(g("Retail Value")), "ppaPct": _pct(g("PPA Calc %")),
         "profit": _money(g("Profit")), "tlp": _money(g("TLP Estimate")),
         "acres": _num(g("Lot Acres")), "calcAcres": _num(g("Calc Acreage")),
         "apn": g("APN"), "pid": g("propertyID"), "fips": g("Parcel FIPS"),
@@ -455,17 +527,21 @@ class Library:
         for path in paths:
             try:
                 with path.open(encoding="utf-8-sig", newline="") as fh:
-                    rows = list(csv.DictReader(fh))
+                    table = list(csv.reader(fh))
             except (OSError, UnicodeDecodeError, csv.Error) as exc:
                 files.append({"name": path.name, "records": 0, "reachable": 0,
                               "error": str(exc)})
                 continue
 
+            header = table[0] if table else []
+            keys = [header_key(h) for h in header]
+            rows = [r for r in table[1:] if any(str(c).strip() for c in r)]
             reachable = 0
-            for raw in rows:
-                if not raw.get("Reference") and not raw.get("Owner Name(s)"):
+            for values in rows:
+                folded = fold_row(keys, values)
+                lead = map_row(folded, path.name)
+                if not lead["ref"] and not lead["owner"]:
                     continue
-                lead = map_row(raw, path.name)
                 leads.append(lead)
                 index.append(build_entry(lead))
                 if lead["phones"]:
@@ -475,8 +551,16 @@ class Library:
                 ref = lead["ref"].upper().replace(" ", "")
                 if ref:
                     by_ref[ref] = lead
-                    row = {str(k).strip(): str(v or "").strip()
-                           for k, v in raw.items() if k is not None}
+                    # Readable headers for the Document Builder, first
+                    # non-empty copy of a repeated column, plus the
+                    # reference under its canonical name whatever this
+                    # file called it ("ref", "Reference", ...).
+                    row = {}
+                    for h, v in zip(header, values):
+                        h = str(h).strip()
+                        if h and not row.get(h):
+                            row[h] = str(v or "").strip()
+                    row["Reference"] = lead["ref"]
                     row["Source File"] = path.name
                     ref_rows.append(row)
 
