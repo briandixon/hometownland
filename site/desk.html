@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Call Desk | Hometown Land</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#22394A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Call Desk">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="/assets/css/desk.css?v=0beba43dd5">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><b>Call Desk</b><span id="status">Starting&hellip;</span></div>
+  <button class="ghost" id="refresh" type="button" aria-label="Refresh" hidden>&#x21bb;</button>
+</header>
+
+<form id="gate" class="gate" hidden>
+  <h1>Call Desk</h1>
+  <p>Your mailer records, on your phone. Enter the desk key once and this phone
+    remembers it.</p>
+  <label for="keyInput">Desk key</label>
+  <input id="keyInput" type="password" autocomplete="current-password"
+         autocapitalize="off" spellcheck="false"
+         placeholder="DESK_KEY from Vercel">
+  <p class="err" id="keyErr" hidden>That key was not accepted.</p>
+  <button class="pri" type="submit">Open the desk</button>
+</form>
+
+<main id="app" hidden>
+  <a class="ringing" id="ringing" href="#" hidden></a>
+
+  <div class="search">
+    <input id="q" type="search" inputmode="search" enterkeyhint="search"
+           autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="Reference, name, address, APN or phone"
+           aria-label="Search the mailers">
+  </div>
+
+  <div id="results" class="list" hidden></div>
+
+  <section id="home">
+    <h2>Recent calls</h2>
+    <div id="recent" class="list"></div>
+    <p class="fine" id="syncline"></p>
+    <p class="fine"><button class="linkish" id="forget" type="button">Forget the key on this phone</button></p>
+  </section>
+
+  <article id="card" hidden></article>
+</main>
+
+<p class="toast" id="toast" role="status" hidden></p>
+<script src="/assets/js/desk.js?v=1db571d874" defer></script>
+</body>
+</html>

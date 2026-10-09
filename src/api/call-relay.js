@@ -17,6 +17,10 @@
  *   CALL_RELAY_KEY    Required. Shared secret. Without it the endpoint is off.
  *   QUO_INBOX_ID      Optional. Only accept calls to this inbox. Default PNu6laiBJX.
  *
+ * Once a call is held, the caller is also looked up in the cloud copy of the
+ * mailers and texted to your cell -- see _desk.js for QUO_API_KEY,
+ * CALL_TEXT_TO and the rest. That half needs the laptop for nothing.
+ *
  * A Redis store is strongly recommended: Vercel runs many copies of this
  * function, so without shared state the copy that hears the call is usually
  * not the copy the desk asks, and the card appears only sometimes. Adding
@@ -40,6 +44,8 @@
 
 import net from "node:net";
 import tls from "node:tls";
+import { kv as sharedStore } from "./_store.js";
+import { afterRing } from "./_desk.js";
 
 const EVENT_KEY = "calldesk:ringing";
 const EVENT_TTL = 90; // seconds; a call not collected by then is stale anyway
@@ -305,6 +311,7 @@ export default async function handler(req, res) {
       "KV_REST_API_URL", "KV_REST_API_TOKEN",
       "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN",
       "KV_URL", "REDIS_URL", "CALL_RELAY_KEY", "QUO_INBOX_ID",
+      "QUO_API_KEY", "CALL_TEXT_TO", "CALL_TEXT_FROM", "CALL_TEXT", "DESK_KEY",
     ];
     const present = {};
     for (const n of names) present[n] = Boolean(process.env[n]);
@@ -367,5 +374,17 @@ export default async function handler(req, res) {
   if (!call.caller) return res.status(200).json({ ok: true, ignored: "withheld number" });
 
   const where = await put(call);
-  return res.status(200).json({ ok: true, held: where });
+
+  // The text to your cell. Logged by reference only -- the Vercel log is not
+  // the place for an owner's name -- and never allowed to fail the webhook.
+  let after = {};
+  try {
+    after = await afterRing(sharedStore(), call, `https://${req.headers.host}`);
+    console.log(`call-relay: ${call.caller.slice(-4)} ${after.duplicate ? "repeat delivery"
+      : (after.matched ? `matched ${after.ref || "a record"}` : "no match")
+        + (after.texted ? ", texted" : after.textError ? `, text failed: ${after.textError}` : "")}`);
+  } catch (err) {
+    console.error("call-relay: after-ring step failed", err);
+  }
+  return res.status(200).json({ ok: true, held: where, texted: Boolean(after.texted) });
 }

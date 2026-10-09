@@ -1,8 +1,9 @@
 """Hometown Land Call Desk — a screen pop for inbound seller calls.
 
-Runs on your own machine. Mailer files are read from desk/mailers/ and never
-leave the computer; the only thing that crosses the network is the caller's
-phone number, coming in from the relay.
+Runs on your own machine. Mailer files are read from desk/mailers/. A copy of
+the records also goes to the site's own private store, so the phone desk at
+gohometownland.com/desk and the texts to your cell work with this laptop shut
+-- set "cloud_sync": false in config.json to keep them on this machine only.
 
     python3 calldesk.py
 
@@ -46,7 +47,7 @@ POLL_SECONDS = 2.0
 # stays as it was when the window was opened. Pulling an update and not
 # restarting therefore runs a new page against an old server, and the first
 # symptom is a reply missing a field the page is sure is there.
-DESK_VERSION = "2026.09.28"
+DESK_VERSION = "2026.10.09"
 
 # Land Portal returns a lot; these are the fields the card actually shows.
 LP_FIELDS = (
@@ -167,6 +168,7 @@ DEFAULT_CONFIG = {
     "relay_key": "",
     "land_portal_token": "",
     "port": DEFAULT_PORT,
+    "cloud_sync": True,
     "debug": False,
 }
 
@@ -206,8 +208,21 @@ def load_config():
     def pick(key, env, default=""):
         return str(cfg.get(key) or os.environ.get(env) or default).strip()
 
+    relay_url = pick("relay_url", "CALL_RELAY_URL")
+    # The cloud desk lives beside the relay, so a config.json written before it
+    # existed already points at the right place.
+    desk_url = pick("desk_url", "CALL_DESK_URL") or (
+        relay_url[:-len("/call-relay")] + "/desk" if relay_url.endswith("/call-relay") else "")
+    cloud = cfg.get("cloud_sync", True)
+    if str(os.environ.get("CALLDESK_CLOUD_SYNC", "")).strip().lower() in ("0", "false", "no", "off"):
+        cloud = False
+
     return {
-        "relay_url": pick("relay_url", "CALL_RELAY_URL"),
+        "relay_url": relay_url,
+        "desk_url": desk_url,
+        # On unless switched off: a config.json from before this setting
+        # existed has no key for it, and the phone desk is the point.
+        "cloud_sync": cloud is not False and str(cloud).strip().lower() not in ("0", "false", "no", "off"),
         "relay_key": pick("relay_key", "CALL_RELAY_KEY"),
         "land_portal_token": pick("land_portal_token", "LAND_PORTAL_TOKEN"),
         "port": int(cfg.get("port") or os.environ.get("CALLDESK_PORT") or DEFAULT_PORT),
@@ -699,6 +714,140 @@ class Parcels:
 
 
 # --------------------------------------------------------------------------
+# the cloud copy, for the phone desk and the texts
+# --------------------------------------------------------------------------
+
+SYNC_BATCH = 200       # records per request; the site takes up to 500
+
+
+class Cloud:
+    """Keeps a copy of the mailer records on the site.
+
+    The phone desk at /desk and the text the relay sends to your cell both
+    read this copy, which is what lets them work with the laptop shut. It is
+    refreshed whenever the desk starts or the folder is reloaded, and sent in
+    batches under a fresh generation that only replaces the live copy once
+    every batch has arrived -- a sync cut off halfway leaves the old copy in
+    place rather than half of a new one.
+
+    It goes to the project's private Redis, through /api/desk, authorised with
+    the same relay key this desk already holds. Never to the repository.
+    """
+
+    def __init__(self, cfg, library, parcels):
+        self.url = cfg["desk_url"]
+        self.key = cfg["relay_key"]
+        self.library = library
+        self.parcels = parcels
+        self.enabled = bool(cfg["cloud_sync"] and self.url and self.key)
+        if not cfg["cloud_sync"]:
+            self.status, self.detail = "off", "switched off in config.json"
+        elif not self.key:
+            self.status, self.detail = "off", "no relay key"
+        else:
+            self.status, self.detail = "waiting", ""
+        self.records = 0
+        self.at = ""
+        self.lock = threading.Lock()
+        self.running = False
+        self.again = False
+
+    def schedule(self):
+        """Sync in the background. A reload during a sync queues one more."""
+        if not self.enabled:
+            return
+        with self.lock:
+            if self.running:
+                self.again = True
+                return
+            self.running = True
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while True:
+            try:
+                self._push()
+            except urllib.error.HTTPError as exc:
+                why = ""
+                try:
+                    why = json.loads(exc.read().decode("utf-8")).get("error", "")
+                except (ValueError, OSError, AttributeError):
+                    pass
+                self.status = "error"
+                self.detail = ("the site rejected the relay key" if exc.code == 401
+                               else "the site has not been updated yet" if exc.code == 404
+                               else f"the site said {exc.code}" + (f": {why}" if why else ""))
+                log.warning(f"cloud sync: {self.detail}")
+            except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+                self.status, self.detail = "error", f"cannot reach the site ({exc})"
+                log.warning(f"cloud sync: {self.detail}")
+            with self.lock:
+                if self.again:
+                    self.again = False
+                    continue
+                self.running = False
+                return
+
+    def _records(self):
+        """The records as the phone needs them: one per reference, newest wins.
+
+        Blank fields are dropped -- they are most of a row and none of its
+        meaning -- and whatever Land Portal detail is already cached rides
+        along, minus the parcel outline, which is the bulk of it.
+        """
+        seen, out = {}, []
+        for lead in self.library.leads:
+            slim = {k: v for k, v in lead.items() if v not in ("", None, [])}
+            cached = self.parcels.cached(lead.get("pid"))
+            if cached:
+                extra = {k: v for k, v in cached.items()
+                         if k not in ("geometry", "requests_left") and v not in ("", None)}
+                if extra:
+                    slim["parcel"] = extra
+            ref = (lead.get("ref") or "").upper().replace(" ", "")
+            if ref and ref in seen:
+                out[seen[ref]] = None   # an older campaign's copy of this record
+            if ref:
+                seen[ref] = len(out)
+            out.append(slim)
+        return [r for r in out if r is not None]
+
+    def _post(self, op, body):
+        sep = "&" if "?" in self.url else "?"
+        req = urllib.request.Request(
+            f"{self.url}{sep}op={op}", data=json.dumps(body).encode("utf-8"),
+            method="POST", headers={"Content-Type": "application/json",
+                                    "Accept": "application/json",
+                                    "x-relay-key": self.key})
+        with urllib.request.urlopen(req, timeout=60,
+                                    context=ssl.create_default_context()) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _push(self):
+        self.status, self.detail = "syncing", ""
+        records = self._records()
+        gen = time.strftime("%Y%m%d%H%M%S", time.gmtime()) + "-" + os.urandom(3).hex()
+        started = time.perf_counter()
+        for offset in range(0, len(records), SYNC_BATCH):
+            self._post("sync", {"gen": gen, "offset": offset,
+                                "leads": records[offset:offset + SYNC_BATCH]})
+        self._post("commit", {
+            "gen": gen, "records": len(records),
+            "files": [{"name": f["name"], "records": f["records"]}
+                      for f in self.library.files if not f.get("error")],
+        })
+        self.records = len(records)
+        self.at = time.strftime("%H:%M")
+        self.status, self.detail = "synced", ""
+        log.info(f"cloud sync: {len(records)} records sent to the phone desk "
+                 f"in {time.perf_counter() - started:.1f}s")
+
+    def snapshot(self):
+        return {"status": self.status, "detail": self.detail,
+                "records": self.records, "at": self.at}
+
+
+# --------------------------------------------------------------------------
 # relay poller
 # --------------------------------------------------------------------------
 
@@ -710,6 +859,7 @@ class Line:
         self.library = library
         self.parcels = parcels
         self.current = None       # the call on screen right now
+        self.cloud = None         # set once the cloud copy is wired up
         self.last_call_id = None
         self.store = ""           # which shared store the relay is using
         self.ready = bool(cfg["relay_url"] and cfg["relay_key"])
@@ -806,6 +956,7 @@ class Line:
             "files": self.library.files,
             "records": len(self.library.leads),
             "reachable": sum(f.get("reachable", 0) for f in self.library.files),
+            "cloud": self.cloud.snapshot() if self.cloud else None,
         }
 
     def clear(self):
@@ -903,6 +1054,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.library.load()
                 log.info(f"reloaded {len(self.library.leads)} records "
                          f"from {len(self.library.files)} file(s)")
+                if self.line.cloud:
+                    self.line.cloud.schedule()
             return self._send(200, {
                 "version": DESK_VERSION,
                 "folder": str(MAILERS),
@@ -941,6 +1094,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.library.load()
             log.info(f"reloaded {len(self.library.leads)} records "
                      f"from {len(self.library.files)} file(s)")
+            if self.line.cloud:
+                self.line.cloud.schedule()
             return self._send(200, self.line.snapshot())
 
         log.warning(f"GET {self.path}: no such route")
@@ -1213,7 +1368,14 @@ def main():
         log.info("land portal: no token, parcel detail comes from the mailer file only")
 
     line = Line(cfg, library, parcels)
+    line.cloud = Cloud(cfg, library, parcels)
     line.start()
+    if line.cloud.enabled:
+        log.info(f"cloud sync: sending the records to {cfg['desk_url']} for the phone desk")
+        line.cloud.schedule()
+    else:
+        log.info(f"cloud sync: off ({line.cloud.detail}) — the phone desk and texts "
+                 "will not know about these files")
     if line.ready:
         log.info(f"watching the relay every {POLL_SECONDS:g}s for inbound calls")
     else:

@@ -93,7 +93,8 @@ the form's success path works — submissions print to the terminal.
 
 Never commit them. `AIRTABLE_TOKEN` and the optional `AIRTABLE_BASE_ID` /
 `AIRTABLE_TABLE` / `AIRTABLE_CONTACTS_TABLE` / `RESEND_API_KEY` /
-`NOTIFY_EMAIL` / `NOTIFY_FROM` live in Vercel under Settings → Environment
+`NOTIFY_EMAIL` / `NOTIFY_FROM` and the Call Desk's `CALL_RELAY_KEY` / `DESK_KEY` /
+`QUO_API_KEY` / `CALL_TEXT_TO` live in Vercel under Settings → Environment
 Variables. **This repository is public.** Base and table IDs are not secrets —
 they are in the Airtable URL and useless without the token — so `lead.js`
 carries them as defaults; the token never appears anywhere in the repo.
@@ -124,6 +125,20 @@ Deliberately not counted, so do not treat any of these as a bug:
 browsers sending Do Not Track, the `/stats` page itself, and every host that is
 not `gohometownland.com` — which is what keeps preview deploys out of the real
 numbers, and also why the beacon appears to do nothing on a preview URL.
+
+## The phone Call Desk
+
+`/desk` is the Call Desk for a phone: a `<!--layout: app-->` page (no site
+chrome, no beacon, noindex, `Disallow`ed) reading `/api/desk`, gated on
+`DESK_KEY` (falls back to `CALL_RELAY_KEY`). The laptop desk (`desk/calldesk.py`,
+class `Cloud`) pushes its mailer records there on start and reload; they live
+only in the project's Redis, never in git. When a call rings, `/api/call-relay`
+looks the caller up in that copy and texts the card to `CALL_TEXT_TO` through
+Quo (`QUO_API_KEY`) — that path needs no laptop. Lookup, text wording and the
+Redis layout are in `src/api/_desk.js`; desk docs are in `desk/README.md`.
+
+An app-layout page loads `/assets/css/<slug>.css` and `/assets/js/<slug>.js`
+with a `?v=` content hash — `/assets/` is cached for a year.
 
 ## The CRM
 

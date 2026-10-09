@@ -3,21 +3,33 @@
 When someone calls your Quo line, their card is on screen before you say hello:
 who they are, what you offered them, and what the parcel is.
 
-It runs on your own computer. **The mailer files never leave the machine** — the
-only thing that crosses the network is the caller's ten-digit phone number,
-arriving from the relay. Owner names, addresses, offer prices and DNC flags stay
-on your hard drive.
+It runs on your own computer, and a copy of the records also lives on the
+site so you can use it **from your phone** — at
+`https://www.gohometownland.com/desk` — and get **a text on your cell** with
+the deal and parcel details the moment a call rings. Both of those work with
+the laptop shut.
 
 ```
-Quo  ──call.ringing──▶  /api/call-relay        (on gohometownland.com)
-                              ▲
+Quo  ──call.ringing──▶  /api/call-relay  ──text──▶  your cell (via Quo)
+                              ▲     │
+                              │     └── looks the caller up in the cloud copy
                               │ the desk asks "anyone calling?" every 2s
                               │
                         Call Desk on your laptop  ──▶  browser tab
+                              │
+                              └── sends its records ──▶  /api/desk  ◀── /desk on your phone
 ```
 
 Nothing reaches *into* your computer. The desk always dials out, so there are no
 ports to open and no firewall changes.
+
+**What leaves the laptop.** Each time the desk starts, or you press **Reload
+from folder**, it sends the mailer records to the site's own private Redis
+store — the same one the relay already uses. That copy is what the phone page
+and the texts read. It is never written to the repository, and every read of
+it needs your desk key. The call log (`calls.csv`) stays on the laptop. To
+keep the records on the laptop only, put `"cloud_sync": false` in
+`config.json`; the phone page and the texts will then know nothing about them.
 
 ---
 
@@ -125,7 +137,8 @@ Open `config.json` in the `desk` folder (Notepad is fine):
   "relay_url": "https://www.gohometownland.com/api/call-relay",
   "relay_key": "paste your CALL_RELAY_KEY here",
   "land_portal_token": "optional - your Land Portal API v2 key",
-  "port": 8322
+  "port": 8322,
+  "cloud_sync": true
 }
 ```
 
@@ -135,7 +148,36 @@ Until `relay_key` is filled in, the desk runs in look-up-only mode: search and
 `config.json` is ignored by git, so your keys cannot reach the public
 repository.
 
-### 5. Add your mailer files
+### 5. Phone desk and texts (optional, recommended)
+
+All of this is in **Vercel → the gohometownland project → Settings →
+Environment Variables**. Redeploy after adding them (Deployments → ⋯ →
+Redeploy).
+
+| Name | Value |
+| --- | --- |
+| `DESK_KEY` | The password the phone page asks for. Long and random, like the relay key — this one opens owner names and offers. Without it, the phone page takes `CALL_RELAY_KEY` instead. |
+| `QUO_API_KEY` | From Quo → **Settings → API**. Lets the site send texts from your Quo line. |
+| `CALL_TEXT_TO` | Your cell number, e.g. `2695551234`. |
+| `CALL_TEXT_FROM` | Optional. Which Quo line sends the text — its `PN…` id or its number. Default: your Primary inbox. |
+| `CALL_TEXT` | Optional. `all` (default) texts every call, `matched` only callers found in your mailers, `off` none. |
+
+Quo charges for the texts it sends through the API as it does for any other
+text. If Quo has not finished registering your line for texting (carrier
+registration), the texts will be refused until it has — the relay keeps
+working either way.
+
+**On the iPhone:** open `https://www.gohometownland.com/desk` in Safari, enter
+the desk key, then **Share → Add to Home Screen**. It opens full screen like
+an app. The home-screen copy asks for the key once more, because iOS keeps it
+apart from Safari.
+
+To check it end to end: start the desk on the laptop (it says `cloud sync:
+… records sent to the phone desk`), open the phone page and see the record
+count, then call your Quo line from another phone. The text should arrive
+while it rings, and the page opens the caller's card on its own.
+
+### 6. Add your mailer files
 
 Drop the CSV exports into the `desk/mailers/` folder, then start the desk again
 (or use **Mailer files → Reload from folder**). That folder is ignored by git
@@ -198,6 +240,27 @@ the same thing instead of something about `id`. Restart and both go away.
   dialling.
 - **Mailer files → Reload from folder** picks up newly added CSVs without a
   restart.
+
+### On your phone
+
+`https://www.gohometownland.com/desk` (or the home-screen icon):
+
+- **A call rings** → a green bar appears and the caller's card opens on its
+  own, if the page is open. With the page closed, the text is what reaches you.
+- **The text** → caller, reference, owner, offer and offer/acre, market value
+  and market/acre, TLP estimate, retail, profit, acres, parcel address, county,
+  APN, zoning, terrain, dates, and a Land Portal link. Its last line opens the
+  full card. A number that is not in any mailer gets a short "no match" text.
+- **Search** works like the laptop: reference, name, parcel address, APN, or
+  any of their phone numbers.
+- **Recent calls** lists the last 30 calls the relay saw, matched or not.
+- **Text me this** on any card sends that card to your cell — handy before
+  returning a call.
+
+The phone page reads the copy the laptop last sent. New CSVs reach it the next
+time the desk starts or you press **Reload from folder**; the header in
+**Mailer files** says when that last happened. Notes are still written on the
+laptop.
 
 ### Document Builder
 
@@ -263,6 +326,15 @@ stays in the box.
 **"The desk did not confirm the save"** — the note was not written, and it is
 still in the box so you can try again. `desk/logs/calldesk.log` says why.
 
+**Phone page says "No records synced yet"** — the laptop has not sent them.
+Open **Mailer files** on the laptop: the line under the file list says why
+("the site rejected the relay key", "the site has not been updated yet", …).
+
+**No text when a call rings** — open the phone page: the line under Recent
+calls says if texting is off. If the call shows in Recent calls but no text
+came, the Vercel function log for `/api/call-relay` has a `text failed:` line
+with Quo's reason.
+
 **Anything else odd** — open `desk/logs/calldesk.log` and look at the end. Every
 request, every saved call and every error is there with the time it happened.
 
@@ -282,3 +354,7 @@ file committed by accident cannot be un-published by deleting it later. The
 `.gitignore` blocks `desk/mailers/`, `desk/cache/`, `desk/logs/`,
 `desk/config.json` and every `.csv` in the project for that reason. Do not force
 past it.
+
+The phone desk keeps its copy of those records in the Vercel project's Redis,
+not in git. Only someone holding `DESK_KEY` (or the relay key) can read it, so
+treat both like passwords.

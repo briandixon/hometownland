@@ -10,9 +10,13 @@ Each page starts with metadata comments:
     <!--nav: how-it-works-->        (which nav item to mark active; optional)
     <!--robots: noindex-->          (keep it out of search and the sitemap; optional)
     <!--script: stats-->            (also load /assets/js/stats.js; optional)
+    <!--layout: app-->              (a full-screen tool: no site header, footer or
+                                     site.js; loads /assets/css/<slug>.css and
+                                     /assets/js/<slug>.js instead; optional)
 
 Run:  python build.py
 """
+import hashlib
 import pathlib
 import re
 import shutil
@@ -71,7 +75,42 @@ SHELL = """<!doctype html>
 </html>
 """
 
-META = re.compile(r"<!--\s*(title|desc|nav|robots|script)\s*:\s*(.*?)\s*-->\s*", re.I)
+# A page that is a tool rather than a page: /desk, opened from a text message
+# on a phone mid-call. The marketing header and footer would only push the card
+# down, and site.js would count it as a visit. Its own stylesheet and script are
+# named after the page and carry a content hash, because /assets/ is cached for
+# a year and a phone would otherwise keep running last month's script.
+APP_SHELL = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{title}</title>
+<meta name="robots" content="{robots}">
+<meta name="theme-color" content="#22394A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="{short}">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/assets/img/apple-touch-icon.png">
+<link rel="stylesheet" href="{css}">
+</head>
+<body>
+{content}
+<script src="{js}" defer></script>
+</body>
+</html>
+"""
+
+META = re.compile(r"<!--\s*(title|desc|nav|robots|script|layout)\s*:\s*(.*?)\s*-->\s*", re.I)
+
+
+def hashed(rel):
+    """/assets/... with ?v=<content hash>, so a changed file is a new URL."""
+    digest = hashlib.sha1((SRC / rel.lstrip("/")).read_bytes()).hexdigest()[:10]
+    return f"{rel}?v={digest}"
 
 
 def read(p):
@@ -134,6 +173,17 @@ def build():
         scripts = "".join(
             f'\n<script src="/assets/js/{name.strip()}.js" defer></script>'
             for name in meta.get("script", "").split(",") if name.strip())
+
+        if meta.get("layout", "").lower() == "app":
+            OUT.joinpath(f"{slug}.html").write_text(
+                APP_SHELL.format(title=full_title, short=title,
+                                 robots=robots or "noindex, nofollow", content=content,
+                                 css=hashed(f"/assets/css/{slug}.css"),
+                                 js=hashed(f"/assets/js/{slug}.js")),
+                encoding="utf-8")
+            slugs.append(slug)          # never in the sitemap: tools are private
+            print(f"  {slug}.html (app)")
+            continue
 
         nav_key = meta.get("nav", slug)
         if nav_key == "index":
