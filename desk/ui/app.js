@@ -545,7 +545,7 @@
         '<span class="lamp" style="animation:none;background:' + (ready ? "var(--good)" : "var(--text-faint)") + '"></span>' +
         '<span class="strip-state" style="color:' + (ready ? "var(--good)" : "var(--text-faint)") + '">' +
           (ready ? "Listening" : "Not listening") + "</span>" +
-        '<span class="strip-num">(866) 520-9045</span>' +
+        '<span class="strip-num">(866) 520-9045 &middot; (781) 579-8849</span>' +
         '<span class="strip-via">' + esc(ready ? "Quo · waiting for a call" : (state && state.detail) || "relay not configured") + "</span></div>" +
       '<div class="nomatch"><h3>' + (records ? "Ready" : "No mailer files") + "</h3>" +
       "<p>" + (records
