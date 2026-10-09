@@ -23,7 +23,7 @@
  *   QUO_API_KEY      Required for texts. Quo > Settings > API.
  *   CALL_TEXT_TO     Required for texts. Your cell, e.g. 2695551234.
  *   CALL_TEXT_FROM   Optional. The Quo line to send from: its PN... id or its
- *                    number. Default QUO_INBOX_ID, else PNu6laiBJX.
+ *                    number. Default the first QUO_INBOX_ID, else PNu6laiBJX.
  *   CALL_TEXT        Optional. "all" (default) texts every call, matched or
  *                    not; "matched" only callers found in the mailers; "off".
  */
@@ -123,7 +123,7 @@ export function marketOf(lead) {
  * ASCII on purpose: a single curly quote or em dash switches the whole
  * message to the 70-character encoding and roughly doubles what it costs.
  */
-export function composeText(lead, { caller = "", origin = "" } = {}) {
+export function composeText(lead, { caller = "", origin = "", dialed = "" } = {}) {
   const L = [];
   const phones = Array.isArray(lead.phones) ? lead.phones : [];
   const line = caller ? phones.find((p) => p.num === tenDigits(caller)) : null;
@@ -133,6 +133,7 @@ export function composeText(lead, { caller = "", origin = "" } = {}) {
   L.push(caller
     ? `CALL ${fmtPhone(caller)}` + (line ? ` (${[line.label, line.type].filter(Boolean).join(", ")})` : "")
     : "CARD");
+  if (caller && dialed) L.push(`To your ${dialed.slice(0, 3)} line`);
   if (line && line.dnc) L.push("This number is flagged DNC - they called you");
   L.push(`Ref ${lead.ref || "-"}` + (lead.mailer ? `  Mailer #${lead.mailer}` : ""));
   if (lead.owner) L.push(`Owner: ${lead.owner}`);
@@ -194,9 +195,10 @@ export function composeText(lead, { caller = "", origin = "" } = {}) {
   return ascii(L.join("\n").replace(/\n{3,}/g, "\n\n").trim()).slice(0, TEXT_MAX);
 }
 
-export function composeUnmatched(caller, origin) {
+export function composeUnmatched(caller, origin, dialed = "") {
   return ascii([
     `CALL ${fmtPhone(caller)} - no mailer match.`,
+    dialed ? `To your ${dialed.slice(0, 3)} line` : "",
     "Ask for the reference on their letter.",
     origin ? `Look up: ${origin}/desk` : "",
   ].filter(Boolean).join("\n"));
@@ -225,7 +227,10 @@ export async function sendText(content) {
   const key = process.env.QUO_API_KEY;
   const to = tenDigits(process.env.CALL_TEXT_TO);
   if (!key || !to) return { sent: false, error: "texting not configured" };
-  const from = process.env.CALL_TEXT_FROM || process.env.QUO_INBOX_ID || "PNu6laiBJX";
+  // QUO_INBOX_ID may list several lines; a text goes from the first.
+  const from = process.env.CALL_TEXT_FROM
+    || String(process.env.QUO_INBOX_ID || "").split(/[\s,]+/).filter(Boolean)[0]
+    || "PNu6laiBJX";
 
   try {
     const res = await fetch(QUO_MESSAGES, {
@@ -278,7 +283,7 @@ export async function afterRing(store, call, origin) {
   if (store) {
     await batch(store, [
       ["LPUSH", RECENT_KEY, JSON.stringify({
-        at: call.at, caller: call.caller, ref: hit ? hit.lead.ref || "" : "",
+        at: call.at, caller: call.caller, line: call.line || "", ref: hit ? hit.lead.ref || "" : "",
         name: hit ? hit.lead.greet || hit.lead.owner || "" : "",
       })],
       ["LTRIM", RECENT_KEY, "0", String(RECENT_MAX - 1)],
@@ -289,8 +294,8 @@ export async function afterRing(store, call, origin) {
   if (!hit && mode === "matched") return result;
 
   const content = hit
-    ? composeText(hit.lead, { caller: call.caller, origin })
-    : composeUnmatched(call.caller, origin);
+    ? composeText(hit.lead, { caller: call.caller, origin, dialed: call.line })
+    : composeUnmatched(call.caller, origin, call.line);
   const sent = await sendText(content);
   result.texted = sent.sent;
   if (!sent.sent) result.textError = sent.error;

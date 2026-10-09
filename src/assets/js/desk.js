@@ -311,10 +311,11 @@
     }
     box.innerHTML = state.recent.map(function (c) {
       var lead = state.byPhone[c.caller];
-      var sub = fmtPhone(c.caller) + " · " + when(c.at);
+      var to = c.line ? " · to " + c.line.slice(0, 3) + " line" : "";
+      var sub = fmtPhone(c.caller) + " · " + when(c.at) + to;
       if (lead) return item(lead, lead.ref || "", sub, "#p=" + c.caller);
       return '<a class="item none" href="#p=' + esc(c.caller) + '"><div class="t"><span>' + esc(fmtPhone(c.caller)) +
-        '</span><span>no match</span></div><div class="s">' + esc(when(c.at)) + "</div></a>";
+        '</span><span>no match</span></div><div class="s">' + esc(when(c.at) + to) + "</div></a>";
     }).join("");
   }
 
