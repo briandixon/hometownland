@@ -1,7 +1,8 @@
 /* Hometown Land Call Desk.
  *
- * All data comes from the local server on 127.0.0.1 — the mailer files never
- * leave the machine. The page polls /api/state; when the relay reports a
+ * All data comes from the local server on 127.0.0.1. (The server also sends a
+ * copy of the records to the site for the phone desk -- see Cloud in
+ * calldesk.py.) The page polls /api/state; when the relay reports a
  * ringing call, the card replaces whatever was on screen.
  */
 (function () {
@@ -20,7 +21,7 @@
      the failure that produces is baffling: a reply arrives, looks fine, and
      is missing a field this page is certain is there. Rather than let that
      surface as a stray TypeError, the two say their version to each other. */
-  var UI_VERSION = "2026.09.28";
+  var UI_VERSION = "2026.10.09";
   var stale = false;       // true once the server has answered with another one
 
   /* ---------- telling the desk what went wrong here ----------
@@ -925,6 +926,19 @@
             "</span></div>";
         }).join("")
       : '<div class="frow"><span class="nm">No CSV files in desk/mailers yet</span></div>';
+
+    // The copy on the site that the phone desk and the texts read.
+    var c = s.cloud || {};
+    var line = document.getElementById("cloudline");
+    if (line) {
+      line.textContent = {
+        synced: "Phone desk: " + c.records + " records sent at " + c.at + ".",
+        syncing: "Phone desk: sending records\u2026",
+        waiting: "Phone desk: waiting to send.",
+        error: "Phone desk: not updated \u2014 " + (c.detail || "unknown error") + ". Reload to try again.",
+        off: "Phone desk: off" + (c.detail ? " (" + c.detail + ")" : "") + "."
+      }[c.status] || "";
+    }
   }
 
   /* The desk answers with the version of the Python that is running. An old

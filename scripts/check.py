@@ -39,12 +39,12 @@ FORBIDDEN = [
 
 EXPECTED_PAGES = {
     "about", "contact", "faq", "how-it-works",
-    "index", "privacy", "terms", "thank-you", "stats",
+    "index", "privacy", "terms", "thank-you", "stats", "desk",
 }
 
 # Pages deliberately kept out of the sitemap: the confirmation page nobody
-# should land on cold, and the private traffic dashboard.
-UNLISTED_PAGES = {"thank-you", "stats"}
+# should land on cold, the private traffic dashboard, and the phone Call Desk.
+UNLISTED_PAGES = {"thank-you", "stats", "desk"}
 
 
 def scanned_files(base):
