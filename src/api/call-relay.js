@@ -15,7 +15,8 @@
  *
  * Environment variables (Vercel > Project > Settings > Environment Variables):
  *   CALL_RELAY_KEY    Required. Shared secret. Without it the endpoint is off.
- *   QUO_INBOX_ID      Optional. Only accept calls to this inbox. Default PNu6laiBJX.
+ *   QUO_INBOX_ID      Optional. Only accept calls to these inboxes, comma-separated.
+ *                     Default: both Quo lines, PNu6laiBJX (866) and PNO59W48E2 (781).
  *
  * Once a call is held, the caller is also looked up in the cloud copy of the
  * mailers and texted to your cell -- see _desk.js for QUO_API_KEY,
@@ -243,6 +244,15 @@ async function take() {
   }
 }
 
+/** The Quo lines whose calls pop a card. Quo only sends what the webhook
+ *  covers; this keeps a webhook pointed at the wrong number from leaking in. */
+const DEFAULT_INBOXES = ["PNu6laiBJX", "PNO59W48E2"];   // (866) 520-9045, (781) 579-8849
+
+function inboxes() {
+  const set = String(process.env.QUO_INBOX_ID || "").split(/[\s,]+/).filter(Boolean);
+  return set.length ? set : DEFAULT_INBOXES;
+}
+
 /** Timing-safe string compare, so the secret cannot be guessed a character at a time. */
 function sameSecret(a, b) {
   if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
@@ -367,8 +377,7 @@ export default async function handler(req, res) {
   if (call.type !== "call.ringing") return res.status(200).json({ ok: true, ignored: call.type });
   if (call.direction !== "incoming") return res.status(200).json({ ok: true, ignored: "outgoing" });
 
-  const inbox = process.env.QUO_INBOX_ID || "PNu6laiBJX";
-  if (call.inboxId && call.inboxId !== inbox) {
+  if (call.inboxId && !inboxes().includes(call.inboxId)) {
     return res.status(200).json({ ok: true, ignored: "other inbox" });
   }
   if (!call.caller) return res.status(200).json({ ok: true, ignored: "withheld number" });

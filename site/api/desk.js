@@ -128,7 +128,7 @@ async function overview(req, res, store) {
   if (ringing) {
     const age = (Date.now() - Date.parse(ringing.at)) / 1000;
     ringing = Number.isFinite(age) && age <= RING_TTL
-      ? { caller: ringing.caller, at: ringing.at, callId: ringing.callId || "" }
+      ? { caller: ringing.caller, line: ringing.line || "", at: ringing.at, callId: ringing.callId || "" }
       : null;
   }
   return res.status(200).json({

@@ -914,9 +914,10 @@ class Line:
         if not call or call.get("callId") == self.last_call_id:
             return
         self.last_call_id = call.get("callId")
-        self.ring(call.get("caller", ""), source="quo", at=call.get("at"))
+        self.ring(call.get("caller", ""), source="quo", at=call.get("at"),
+                  line=call.get("line", ""))
 
-    def ring(self, number, source="manual", at=None):
+    def ring(self, number, source="manual", at=None, line=""):
         """Put a caller on screen. Also used by the test button in the UI."""
         number = ten_digits(number)
         hit = self.library.by_number(number)
@@ -927,7 +928,7 @@ class Line:
             threading.Thread(target=self._enrich, args=(hit["lead"],), daemon=True).start()
         with self.lock:
             self.current = {
-                "number": number, "source": source,
+                "number": number, "source": source, "line": ten_digits(line),
                 "at": at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "matched": bool(hit), "card": card, "seq": time.time(),
             }

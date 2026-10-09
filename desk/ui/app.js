@@ -274,7 +274,7 @@
           '<span class="lamp"></span>' +
           '<span class="strip-state" id="stripstate">Incoming call</span>' +
           '<span class="strip-num">' + esc(fmtPhone(number)) + "</span>" +
-          '<span class="strip-via">via Quo · (866) 520-9045</span>' +
+          '<span class="strip-via">via Quo · ' + esc(fmtPhone(dialed || "8665209045")) + "</span>" +
           '<span class="strip-timer" id="timer">00:00</span>' +
           '<span class="strip-acts">' +
             '<button class="act pri" id="answer" type="button">Answer</button>' +
@@ -471,6 +471,10 @@
   var STRANGER = { ref: "", owner: "", greet: "", phones: [], offer: null,
                    pAddr: "", pCity: "", pState: "" };
 
+  /* Which of your Quo lines the caller dialled. A desk older than this field
+     sends none, and the (866) line was the only one it listened to. */
+  var dialed = "";
+
   function showNoMatch(number) {
     var key = cardKey(STRANGER, "call", number);
     if (cardState && cardState.key === key) readCard();
@@ -481,7 +485,7 @@
       '<div class="strip" id="strip"><span class="lamp"></span>' +
         '<span class="strip-state" id="stripstate">Incoming call</span>' +
         '<span class="strip-num">' + esc(fmtPhone(number)) + "</span>" +
-        '<span class="strip-via">via Quo · (866) 520-9045</span>' +
+        '<span class="strip-via">via Quo · ' + esc(fmtPhone(dialed || "8665209045")) + "</span>" +
         '<span class="strip-timer" id="timer">00:00</span>' +
         '<span class="strip-acts">' +
           '<button class="act pri" id="answer" type="button">Answer</button>' +
@@ -541,7 +545,7 @@
         '<span class="lamp" style="animation:none;background:' + (ready ? "var(--good)" : "var(--text-faint)") + '"></span>' +
         '<span class="strip-state" style="color:' + (ready ? "var(--good)" : "var(--text-faint)") + '">' +
           (ready ? "Listening" : "Not listening") + "</span>" +
-        '<span class="strip-num">(866) 520-9045</span>' +
+        '<span class="strip-num">(866) 520-9045 &middot; (781) 579-8849</span>' +
         '<span class="strip-via">' + esc(ready ? "Quo · waiting for a call" : (state && state.detail) || "relay not configured") + "</span></div>" +
       '<div class="nomatch"><h3>' + (records ? "Ready" : "No mailer files") + "</h3>" +
       "<p>" + (records
@@ -970,6 +974,7 @@
       if (call.seq === seq) return;   // already on screen
       seq = call.seq;
       mode = "call";
+      dialed = call.line || "";
       if (call.matched && call.card) {
         showCard(call.card.lead, call.card.phone, call.card.parcel, "call", call.number);
       } else {

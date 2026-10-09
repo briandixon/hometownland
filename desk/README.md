@@ -110,7 +110,11 @@ In Quo → **Settings → Integrations → Webhooks**, create a webhook for call
 
 - **URL** — `https://www.gohometownland.com/api/call-relay?key=YOUR_KEY`
 - **Event** — `call.ringing`
-- **Number** — your Primary inbox, (866) 520-9045
+- **Numbers** — both lines: (866) 520-9045 and (781) 579-8849
+
+The relay accepts calls to either line (set `QUO_INBOX_ID` to a comma-separated
+list of `PN…` ids to change which). The card and the text both say which line
+was dialled.
 
 Leave any existing Make webhook alone if you still want it; Quo can post to
 several places at once.
