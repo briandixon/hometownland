@@ -9,12 +9,14 @@
   if (!gate) return;
 
   var KEY_STORE = "htl.statskey";
+  var MINE_STORE = "htl.statsmine";
   var dash = document.getElementById("dash");
   var note = document.getElementById("dashNote");
   var keyInput = document.getElementById("keyInput");
   var keyMsg = document.getElementById("keyMsg");
   var rangeSel = document.getElementById("rangeSel");
   var botToggle = document.getElementById("botToggle");
+  var mineToggle = document.getElementById("mineToggle");
   var latest = null;
 
   function remembered() {
@@ -22,6 +24,11 @@
   }
   function remember(k) {
     try { k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE); } catch (e) {}
+  }
+
+  /* Hiding the owner's own visits is the default; showing them is remembered. */
+  function hideMine() {
+    try { return localStorage.getItem(MINE_STORE) !== "show"; } catch (e) { return true; }
   }
 
   function say(text) {
@@ -136,6 +143,8 @@
     var t = data.totals;
     var f = data.funnel || { starts: 0, step2: 0, step3: 0, submits: t.leads };
     var b = data.bots || { views: 0, visits: 0 };
+    var me = data.owner || { towns: [], included: true, hidden: { views: 0, visits: 0 } };
+    var mineNote = me.included ? "" : "; " + num(me.hidden.visits) + " of yours left out";
     var withBots = botToggle.checked;
     var perVisit = t.visits ? (t.views / t.visits).toFixed(1) : "0";
     var rate = t.visits ? ((t.leads / t.visits) * 100).toFixed(1) + "%" : "—";
@@ -144,12 +153,18 @@
     var tiles = document.getElementById("tiles");
     tiles.textContent = "";
     tiles.appendChild(tile("Visits", num(t.visits),
-      withBots ? "people; plus " + num(b.visits) + " by bots" : "people, counted once per session"));
+      (withBots ? "people; plus " + num(b.visits) + " by bots" : "people, counted once per session")
+      + mineNote));
     tiles.appendChild(tile("Page views", num(t.views),
       withBots ? "by people; plus " + num(b.views) + " by bots" : perVisit + " pages per visit"));
     tiles.appendChild(tile("Offer requests", num(t.leads), rate + " of visits"));
     tiles.appendChild(tile("Form finished", finish,
       num(f.starts) + " started it, " + num(f.submits) + " sent it"));
+
+    if (me.towns.length) {
+      document.getElementById("mineLabel").textContent =
+        "Hide my visits (" + me.towns.join(", ") + ")";
+    }
 
     document.querySelectorAll(".bot-only").forEach(function (n) { n.hidden = !withBots; });
     var old = document.querySelector(".chart-ends");
@@ -205,7 +220,10 @@
       + "data-center towns such as Ashburn VA and Council Bluffs IA, and anyone who "
       + "left in under a second without touching the page. Days before bot scoring "
       + "began still have some bots mixed in. Visitors who ask not to be tracked are "
-      + "not counted, so the real figures are a little higher than these.";
+      + "not counted, so the real figures are a little higher than these."
+      + (me.included ? "" : " Your own visits are left out by the town they come from ("
+      + me.towns.join(", ") + "); on days before that was recorded separately, only the "
+      + "visit and location counts could be corrected, so some of your page views remain.");
   }
 
   function load() {
@@ -213,7 +231,8 @@
     if (!key) return askForKey(false);
 
     say("Loading…");
-    fetch("/api/track?days=" + encodeURIComponent(rangeSel.value), {
+    fetch("/api/track?days=" + encodeURIComponent(rangeSel.value)
+        + (mineToggle.checked ? "" : "&mine=include"), {
       headers: { "x-traffic-key": key },
       cache: "no-store"
     })
@@ -288,6 +307,11 @@
   });
 
   rangeSel.addEventListener("change", load);
+  mineToggle.checked = hideMine();
+  mineToggle.addEventListener("change", function () {
+    try { localStorage.setItem(MINE_STORE, mineToggle.checked ? "hide" : "show"); } catch (e) {}
+    load();
+  });
   botToggle.addEventListener("change", function () { if (latest) render(latest); });
   document.getElementById("csvBtn").addEventListener("click", csv);
   document.getElementById("forgetBtn").addEventListener("click", function () {

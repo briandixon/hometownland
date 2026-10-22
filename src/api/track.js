@@ -23,9 +23,15 @@
  * friends), which are derived from the IP address before the request reaches
  * this function. We read the city, we never read or keep the address itself.
  *
+ * The owner's own browsing is kept apart the same way, under "m:", by the town
+ * it comes from (OWNER_TOWNS below). /stats leaves it out unless asked.
+ *
  * Environment variables (Vercel > Project > Settings > Environment Variables):
  *   TRAFFIC_KEY    Required for GET. The password for /stats. Without it the
  *                  dashboard is off; recording still works.
+ *   TRAFFIC_OWNER_TOWNS
+ *                  Optional. Towns whose visits are the owner's, as
+ *                  "City, ST" separated by semicolons. Defaults to OWNER_TOWNS.
  *
  * Storage is the same Redis the Call Desk uses, and the same variable names
  * are accepted, so a project already set up for the desk needs nothing added:
@@ -72,6 +78,22 @@ const F = {
 // A bot's counters live in the same day hash under this prefix -- b:views,
 // b:p|/about -- so the humans' fields keep their names and history.
 const BOT_PREFIX = "b:";
+
+// The owner's own visits, told apart by the town they come from -- a small
+// town nobody else is likely to browse from. Counted under "m:" so /stats can
+// leave them out; a bot from that town is still counted as a bot.
+const MINE_PREFIX = "m:";
+const OWNER_TOWNS = "Walpole, MA";
+
+function ownerTowns() {
+  return String(process.env.TRAFFIC_OWNER_TOWNS || OWNER_TOWNS)
+    .split(";").map((t) => t.trim()).filter(Boolean);
+}
+
+/** Lowercased "city, st" keys, matched against Vercel's US city headers. */
+function ownerTownKeys() {
+  return new Set(ownerTowns().map((t) => t.toLowerCase().replace(/\s*,\s*/g, ", ")));
+}
 
 // Words that give a crawler away, from before isbot was added. Still checked
 // alongside it, and on its own if the isbot package failed to install.
@@ -481,32 +503,38 @@ async function record(req, res) {
   const bump = (field, by = 1) => ["HINCRBY", key, field, String(by)];
   const commands = [];
 
+  const geo = {
+    country: label(header(req, "x-vercel-ip-country"), 2).toUpperCase(),
+    region: label(header(req, "x-vercel-ip-country-region"), 3).toUpperCase(),
+    cityName: label(header(req, "x-vercel-ip-city"), 40),
+  };
+  const mine = geo.country === "US"
+    && ownerTownKeys().has(`${geo.cityName}, ${geo.region}`.toLowerCase());
+
   if (body.e) {
     // A named event rather than a page view: the offer form's progress.
     // Somebody filling in a form has already shown they are a person, so a
     // crawler user agent is the only filter these get.
     if (!ua || await crawlerAgent(ua)) return done();
+    // The owner trying out the form is not a lead either.
+    const as = mine ? MINE_PREFIX : "";
     const event = label(body.e, 20);
     if (event === "lead") {
-      commands.push(bump(F.leads));
+      commands.push(bump(as + F.leads));
     } else if (event === "form_start") {
-      commands.push(bump(F.form + "start"));
+      commands.push(bump(as + F.form + "start"));
     } else if (event === "form_step") {
       const step = Number(body.step);
       if (step !== 2 && step !== 3) return done();
-      commands.push(bump(F.form + `step${step}`));
+      commands.push(bump(as + F.form + `step${step}`));
     } else {
       return done();
     }
   } else {
-    const geo = {
-      country: label(header(req, "x-vercel-ip-country"), 2).toUpperCase(),
-      region: label(header(req, "x-vercel-ip-country-region"), 3).toUpperCase(),
-      cityName: label(header(req, "x-vercel-ip-city"), 40),
-    };
     const verdict = await botScore(req, ua, body, geo);
-    // A bot's counts go to the same fields under b:, a human's to the plain ones.
-    const as = verdict.bot ? BOT_PREFIX : "";
+    // A bot's counts go to the same fields under b:, the owner's under m:,
+    // everybody else's to the plain ones.
+    const as = verdict.bot ? BOT_PREFIX : mine ? MINE_PREFIX : "";
     const first = body.n === 1 || body.n === "1";
 
     commands.push(bump(F.score + Math.floor(verdict.score / 10) * 10));
@@ -571,6 +599,46 @@ function collect(into, day, prefix) {
   }
 }
 
+/**
+ * One day's hash with the owner's m: fields either folded into the plain ones
+ * or dropped. Days recorded before m: existed hold the owner's visits in the
+ * plain fields; their city row says how many, so those visits come off the
+ * visit, country, region and city counts too. Their page views cannot be told
+ * apart and stay in. `hidden` tallies what was taken out.
+ */
+function withOwner(day, include, hidden) {
+  const out = {};
+  for (const [field, count] of Object.entries(day)) {
+    if (!field.startsWith(MINE_PREFIX)) {
+      out[field] = (out[field] || 0) + count;
+      continue;
+    }
+    const plain = field.slice(MINE_PREFIX.length);
+    if (include) {
+      out[plain] = (out[plain] || 0) + count;
+    } else if (plain === F.views || plain === F.visits || plain === F.leads) {
+      hidden[plain] += count;
+    }
+  }
+  if (include) return out;
+
+  const towns = ownerTownKeys();
+  const less = (field, n) => { if (out[field]) out[field] = Math.max(0, out[field] - n); };
+  for (const field of Object.keys(out)) {
+    if (!field.startsWith(F.city)) continue;
+    const parts = field.slice(F.city.length).split(", ");
+    if (parts.length !== 3 || parts[2] !== "US") continue;
+    if (!towns.has(`${parts[0]}, ${parts[1]}`.toLowerCase())) continue;
+    const n = out[field];
+    delete out[field];
+    less(F.visits, n);
+    less(F.country + "US", n);
+    less(F.region + `US-${parts[1]}`, n);
+    hidden.visits += n;
+  }
+  return out;
+}
+
 function ranked(tally) {
   return Object.entries(tally)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -600,6 +668,7 @@ async function report(req, res) {
     });
   }
 
+  const includeOwner = url.searchParams.get("mine") === "include";
   const asked = Number(url.searchParams.get("days"));
   const days = Math.min(Math.max(Number.isFinite(asked) ? asked : 30, 1), MAX_DAYS);
   const dates = daysBack(days);
@@ -613,12 +682,13 @@ async function report(req, res) {
   const bots = { views: 0, visits: 0 };
   const groups = { pages: {}, sources: {}, countries: {}, regions: {}, cities: {}, devices: {}, campaigns: {} };
   const botGroups = { reasons: {}, pages: {}, countries: {}, cities: {}, sources: {} };
+  const hidden = { views: 0, visits: 0, leads: 0 };
   const funnel = {};
   const scores = {};
   const daily = [];
 
   dates.forEach((date, i) => {
-    const day = toMap(replies[i]);
+    const day = withOwner(toMap(replies[i]), includeOwner, hidden);
     const views = day[F.views] || 0;
     const visits = day[F.visits] || 0;
     const leads = day[F.leads] || 0;
@@ -658,6 +728,7 @@ async function report(req, res) {
     // Days before bot scoring was added have no b: fields, so their human
     // counts still include whatever bots the old user-agent check missed.
     bots,
+    owner: { towns: ownerTowns(), included: includeOwner, hidden },
     funnel: {
       starts: funnel.start || 0,
       step2: funnel.step2 || 0,
