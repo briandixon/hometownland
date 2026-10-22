@@ -79,11 +79,12 @@ const F = {
 // b:p|/about -- so the humans' fields keep their names and history.
 const BOT_PREFIX = "b:";
 
-// The owner's own visits, told apart by the town they come from -- a small
-// town nobody else is likely to browse from. Counted under "m:" so /stats can
-// leave them out; a bot from that town is still counted as a bot.
+// The owner's own visits, told apart by the town they come from -- small towns
+// nobody else is likely to browse from. Walpole and Norfolk are neighbours and
+// the owner's connection geolocates to either, so both count. Counted under
+// "m:" so /stats can leave them out; a bot from them is still counted as a bot.
 const MINE_PREFIX = "m:";
-const OWNER_TOWNS = "Walpole, MA";
+const OWNER_TOWNS = "Walpole, MA; Norfolk, MA";
 
 function ownerTowns() {
   return String(process.env.TRAFFIC_OWNER_TOWNS || OWNER_TOWNS)
