@@ -121,6 +121,10 @@ under `b:` fields; `/stats` hides them unless "Show bots" is ticked. A visit
 from a data-center town (Ashburn VA, Council Bluffs IA, …) is a bot by
 definition, even if it scrolls — that is deliberate.
 
+The owner's own visits — anything from Walpole MA (`OWNER_TOWNS` in
+`src/api/track.js`, overridable with `TRAFFIC_OWNER_TOWNS`) — are counted apart
+under `m:` fields, and `/stats` hides them unless "Hide my visits" is unticked.
+
 Deliberately not counted, so do not treat any of these as a bug:
 browsers sending Do Not Track, the `/stats` page itself, and every host that is
 not `gohometownland.com` — which is what keeps preview deploys out of the real
