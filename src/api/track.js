@@ -6,12 +6,17 @@
  *   POST /api/track                 a page beacons in "somebody is reading me"
  *   GET  /api/track?key=SECRET      the /stats dashboard asks for the numbers
  *
- * What is stored is counters, and only counters. Every hit adds 1 to a handful
- * of fields in a per-day hash -- views, the path, and for the first page of a
- * visit the country, region, city, device and where the visitor came from.
- * There is no row per visitor, no IP address, no cookie and no identifier that
- * outlives the browser tab, so there is nothing here that can be turned back
- * into a person, and nothing that grows with traffic except the numbers.
+ * Two things are stored. Counters: every hit adds 1 to a handful of fields in
+ * a per-day hash -- views, the path, and for the first page of a visit the
+ * country, region, city, device and where the visitor came from. And a visit
+ * log: one short line per page view or form step in a per-day list, tied
+ * together by a random id the browser tab made up and forgets when it closes,
+ * so /stats can show and export each visit with its date and time.
+ *
+ * Neither holds an IP address, a cookie or anything that outlives the tab, so
+ * nothing here can be turned back into a person or followed to a later visit.
+ * Each day's log is capped (LOG_CAP), so a script cannot make it grow without
+ * bound.
  *
  * Every page view is scored for how likely it is to be a bot (rules and lists
  * in _bot-rules.js). A bot's counts go to the same fields prefixed "b:", so
@@ -54,8 +59,14 @@ import {
 
 const SITE_HOST = "gohometownland.com";
 const PREFIX = "htl:d:";           // one hash per day: htl:d:2026-09-21
+const LOG_PREFIX = "htl:l:";       // the visit log, one list per day: htl:l:2026-10-29
+const BOT_LOG_PREFIX = "htl:lb:";  // bots' lines, kept apart so they cannot crowd people out
+const LOG_START = "htl:logstart";  // the first day the visit log was written
+const LOG_CAP = 5000;              // lines kept per day for people
+const BOT_LOG_CAP = 1000;          // and for bots
+const VISITS_SHOWN = 5000;         // newest visits returned in one report
 const RETENTION_DAYS = 400;        // a full year plus change, then it expires
-const MAX_DAYS = 120;              // most the dashboard may ask for at once
+const MAX_DAYS = RETENTION_DAYS;   // most the dashboard may ask for at once
 const TOP_N = 15;                  // rows per table in the report
 
 // Counters are grouped inside the day hash by a one-letter prefix.
@@ -318,11 +329,45 @@ function dayKey(date) {
   return date.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 }
 
-function daysBack(n) {
+/** "3:07 PM", Eastern, to go with dayKey. */
+function timeOf(date) {
+  return date.toLocaleTimeString("en-US", {
+    timeZone: "America/New_York", hour: "numeric", minute: "2-digit",
+  });
+}
+
+/** "2026-10-29" plus n days, done on the calendar so no timezone can shift it. */
+function addDays(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The days a report covers, oldest first: from..to when both are given and
+ * valid, else the last `days` days. Never past today, never more than MAX_DAYS.
+ */
+function dayRange(params) {
+  const today = dayKey(new Date());
+  let from = params.get("from") || "";
+  let to = params.get("to") || "";
+  if (ISO_DAY.test(from) && ISO_DAY.test(to)) {
+    if (from > to) [from, to] = [to, from];
+    if (to > today) to = today;
+    if (from > to) from = to;
+  } else {
+    const asked = Number(params.get("days"));
+    const days = Math.min(Math.max(Number.isFinite(asked) && asked ? asked : 30, 1), MAX_DAYS);
+    to = today;
+    from = addDays(today, 1 - days);
+  }
+  const earliest = addDays(to, 1 - MAX_DAYS);
+  if (from < earliest) from = earliest;
+
   const out = [];
-  const now = Date.now();
-  for (let i = 0; i < n; i++) out.push(dayKey(new Date(now - i * 86400000)));
-  return out.reverse();
+  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  return out;
 }
 
 /** Trim a label to something safe to use as a hash field. */
@@ -500,9 +545,19 @@ async function record(req, res) {
   }
   body = body && typeof body === "object" ? body : {};
 
-  const key = PREFIX + dayKey(new Date());
+  const now = new Date();
+  const today = dayKey(now);
+  const key = PREFIX + today;
   const bump = (field, by = 1) => ["HINCRBY", key, field, String(by)];
   const commands = [];
+
+  // The tab's random visit id. A beacon from an older cached site.js has none,
+  // and is counted but not logged.
+  const visitId = /^[a-z0-9]{6,16}$/.test(String(body.id || "")) ? String(body.id) : "";
+  const logLines = [];
+  const log = (line, bot) => {
+    if (visitId) logLines.push({ bot, line: JSON.stringify({ id: visitId, at: now.getTime(), ...line }) });
+  };
 
   const geo = {
     country: label(header(req, "x-vercel-ip-country"), 2).toUpperCase(),
@@ -522,12 +577,15 @@ async function record(req, res) {
     const event = label(body.e, 20);
     if (event === "lead") {
       commands.push(bump(as + F.leads));
+      log({ e: "lead" }, false);
     } else if (event === "form_start") {
       commands.push(bump(as + F.form + "start"));
+      log({ e: "start" }, false);
     } else if (event === "form_step") {
       const step = Number(body.step);
       if (step !== 2 && step !== 3) return done();
       commands.push(bump(as + F.form + `step${step}`));
+      log({ e: `step${step}` }, false);
     } else {
       return done();
     }
@@ -537,19 +595,28 @@ async function record(req, res) {
     // everybody else's to the plain ones.
     const as = verdict.bot ? BOT_PREFIX : mine ? MINE_PREFIX : "";
     const first = body.n === 1 || body.n === "1";
+    const path = cleanPath(body.p);
+    const line = { p: path, sc: verdict.score };
+    if (verdict.bot) line.b = 1;
+    if (mine) line.m = 1;
 
     commands.push(bump(F.score + Math.floor(verdict.score / 10) * 10));
     commands.push(bump(as + F.views));
-    commands.push(bump(as + F.path + cleanPath(body.p)));
+    commands.push(bump(as + F.path + path));
     if (verdict.bot) commands.push(bump(BOT_PREFIX + F.reason + verdict.reason));
 
     if (first) {
       const { country, region, cityName } = geo;
       const campaign = label(body.c, 40);
+      const source = sourceOf(body.r, body.s, req.headers.host);
+      const device = deviceOf(ua);
+      Object.assign(line, { n: 1, s: source, v: device, c: country, r: region, y: cityName });
+      if (campaign) line.k = campaign;
+      if (verdict.bot) line.w = verdict.reason;
 
       commands.push(bump(as + F.visits));
-      commands.push(bump(as + F.source + sourceOf(body.r, body.s, req.headers.host)));
-      commands.push(bump(as + F.device + deviceOf(ua)));
+      commands.push(bump(as + F.source + source));
+      commands.push(bump(as + F.device + device));
       if (country) commands.push(bump(as + F.country + country));
       if (country && region) commands.push(bump(as + F.region + `${country}-${region}`));
       if (cityName) {
@@ -557,12 +624,24 @@ async function record(req, res) {
       }
       if (campaign) commands.push(bump(as + F.campaign + campaign));
     }
+    log(line, verdict.bot);
   }
 
   // Keep a year and change, then let the day fall off on its own. EXPIRE is
   // idempotent, so re-setting it on every hit costs one command and removes
   // any need to know whether the key is new.
   commands.push(["EXPIRE", key, String(RETENTION_DAYS * 86400)]);
+
+  // The visit log: append, then trim back to the cap, so once a day's list is
+  // full later lines fall off rather than earlier ones being pushed out.
+  for (const { bot, line } of logLines) {
+    const list = (bot ? BOT_LOG_PREFIX : LOG_PREFIX) + today;
+    const cap = bot ? BOT_LOG_CAP : LOG_CAP;
+    commands.push(["RPUSH", list, line]);
+    commands.push(["LTRIM", list, "0", String(cap - 1)]);
+    commands.push(["EXPIRE", list, String(RETENTION_DAYS * 86400)]);
+  }
+  if (logLines.length) commands.push(["SET", LOG_START, today, "NX"]);
 
   await batch(store, commands);
   return done();
@@ -640,6 +719,55 @@ function withOwner(day, include, hidden) {
   return out;
 }
 
+/**
+ * Turn the day lists' lines back into visits, newest first. Lines are joined
+ * on the tab's visit id, so a visit that ran past midnight is still one visit,
+ * dated by the day it started.
+ */
+function visitsFrom(lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const raw of list) {
+      let line;
+      try { line = JSON.parse(raw); } catch { continue; }
+      if (!line || !line.id || !Number.isFinite(line.at)) continue;
+      if (!byId.has(line.id)) byId.set(line.id, []);
+      byId.get(line.id).push(line);
+    }
+  }
+
+  const FORM = { start: 1, step2: 2, step3: 3, lead: 4 };
+  const FORM_LABEL = ["", "Started", "Reached step 2", "Reached step 3", "Sent"];
+  const out = [];
+  for (const lines of byId.values()) {
+    lines.sort((a, b) => a.at - b.at);
+    const pages = lines.filter((l) => l.p);
+    if (!pages.length) continue;                      // form steps whose page view is out of range
+    const head = pages.find((l) => l.n) || pages[0];
+    const start = new Date(lines[0].at);
+    const form = lines.reduce((m, l) => Math.max(m, FORM[l.e] || 0), 0);
+    out.push({
+      at: lines[0].at,
+      date: dayKey(start),
+      time: timeOf(start),
+      pages: pages.map((l) => l.p),
+      source: head.s || "",
+      campaign: head.k || "",
+      city: head.y || "",
+      region: head.r || "",
+      country: head.c || "",
+      device: head.v || "",
+      form: FORM_LABEL[form],
+      bot: !!head.b,
+      score: head.sc || 0,
+      botReason: head.w || "",
+      mine: pages.some((l) => l.m),
+    });
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
 function ranked(tally) {
   return Object.entries(tally)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -670,14 +798,23 @@ async function report(req, res) {
   }
 
   const includeOwner = url.searchParams.get("mine") === "include";
-  const asked = Number(url.searchParams.get("days"));
-  const days = Math.min(Math.max(Number.isFinite(asked) ? asked : 30, 1), MAX_DAYS);
-  const dates = daysBack(days);
+  const withBotLog = url.searchParams.get("bots") === "1";
+  const dates = dayRange(url.searchParams);
+  const days = dates.length;
 
-  const replies = await batch(store, dates.map((d) => ["HGETALL", PREFIX + d]));
+  // One pipeline: each day's counters, each day's visit log (bots' only when
+  // asked for -- they can be most of the lines), and when the log began.
+  const commands = dates.map((d) => ["HGETALL", PREFIX + d]);
+  commands.push(...dates.map((d) => ["LRANGE", LOG_PREFIX + d, "0", "-1"]));
+  if (withBotLog) commands.push(...dates.map((d) => ["LRANGE", BOT_LOG_PREFIX + d, "0", "-1"]));
+  commands.push(["GET", LOG_START]);
+
+  const replies = await batch(store, commands);
   if (!replies) {
     return res.status(502).json({ ok: false, error: "the store did not answer" });
   }
+  const visits = visitsFrom(replies.slice(days, withBotLog ? days * 3 : days * 2));
+  const logStart = replies[replies.length - 1] || null;
 
   const totals = { views: 0, visits: 0, leads: 0 };
   const bots = { views: 0, visits: 0 };
@@ -744,6 +881,12 @@ async function report(req, res) {
     botCities: ranked(botGroups.cities),
     botSources: ranked(botGroups.sources),
     daily,
+    // One row per visit, newest first. Bots' and the owner's visits carry a
+    // flag and are filtered on the page, so the toggles need no reload.
+    logStart,
+    botLog: withBotLog,
+    visitCount: visits.length,
+    visits: visits.slice(0, VISITS_SHOWN),
     pages: ranked(groups.pages),
     sources: ranked(groups.sources),
     countries: ranked(groups.countries),
