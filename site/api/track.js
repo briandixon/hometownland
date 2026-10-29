@@ -28,8 +28,11 @@
  * friends), which are derived from the IP address before the request reaches
  * this function. We read the city, we never read or keep the address itself.
  *
- * The owner's own browsing is kept apart the same way, under "m:", by the town
- * it comes from (OWNER_TOWNS below). /stats leaves it out unless asked.
+ * The owner's own browsing is kept apart the same way, under "m:". It is
+ * recognised two ways: by the town it comes from (OWNER_TOWNS below), and by a
+ * mark /stats leaves in the owner's own browser once the key is accepted, which
+ * site.js then sends as "o" -- so the owner's phone on a cell network anywhere
+ * is still the owner. /stats leaves both out.
  *
  * Environment variables (Vercel > Project > Settings > Environment Variables):
  *   TRAFFIC_KEY    Required for GET. The password for /stats. Without it the
@@ -67,7 +70,7 @@ const BOT_LOG_CAP = 1000;          // and for bots
 const VISITS_SHOWN = 5000;         // newest visits returned in one report
 const RETENTION_DAYS = 400;        // a full year plus change, then it expires
 const MAX_DAYS = RETENTION_DAYS;   // most the dashboard may ask for at once
-const TOP_N = 15;                  // rows per table in the report
+const TOP_N = 25;                  // rows per table in the report
 
 // Counters are grouped inside the day hash by a one-letter prefix.
 const F = {
@@ -564,8 +567,8 @@ async function record(req, res) {
     region: label(header(req, "x-vercel-ip-country-region"), 3).toUpperCase(),
     cityName: label(header(req, "x-vercel-ip-city"), 40),
   };
-  const mine = geo.country === "US"
-    && ownerTownKeys().has(`${geo.cityName}, ${geo.region}`.toLowerCase());
+  const mine = body.o === 1 || body.o === "1" || (geo.country === "US"
+    && ownerTownKeys().has(`${geo.cityName}, ${geo.region}`.toLowerCase()));
 
   if (body.e) {
     // A named event rather than a page view: the offer form's progress.
@@ -596,7 +599,9 @@ async function record(req, res) {
     const as = verdict.bot ? BOT_PREFIX : mine ? MINE_PREFIX : "";
     const first = body.n === 1 || body.n === "1";
     const path = cleanPath(body.p);
-    const line = { p: path, sc: verdict.score };
+    // Where it came from rides on every line, not just the first, so a visit
+    // whose first page fell outside the range asked for still has a place.
+    const line = { p: path, sc: verdict.score, c: geo.country, r: geo.region, y: geo.cityName };
     if (verdict.bot) line.b = 1;
     if (mine) line.m = 1;
 
@@ -610,7 +615,7 @@ async function record(req, res) {
       const campaign = label(body.c, 40);
       const source = sourceOf(body.r, body.s, req.headers.host);
       const device = deviceOf(ua);
-      Object.assign(line, { n: 1, s: source, v: device, c: country, r: region, y: cityName });
+      Object.assign(line, { n: 1, s: source, v: device });
       if (campaign) line.k = campaign;
       if (verdict.bot) line.w = verdict.reason;
 
@@ -745,6 +750,7 @@ function visitsFrom(lists) {
     const pages = lines.filter((l) => l.p);
     if (!pages.length) continue;                      // form steps whose page view is out of range
     const head = pages.find((l) => l.n) || pages[0];
+    const firstSeen = pages[0];
     const start = new Date(lines[0].at);
     const form = lines.reduce((m, l) => Math.max(m, FORM[l.e] || 0), 0);
     out.push({
@@ -754,9 +760,9 @@ function visitsFrom(lists) {
       pages: pages.map((l) => l.p),
       source: head.s || "",
       campaign: head.k || "",
-      city: head.y || "",
-      region: head.r || "",
-      country: head.c || "",
+      city: head.y || firstSeen.y || "",
+      region: head.r || firstSeen.r || "",
+      country: head.c || firstSeen.c || "",
       device: head.v || "",
       form: FORM_LABEL[form],
       bot: !!head.b,
@@ -813,7 +819,11 @@ async function report(req, res) {
   if (!replies) {
     return res.status(502).json({ ok: false, error: "the store did not answer" });
   }
-  const visits = visitsFrom(replies.slice(days, withBotLog ? days * 3 : days * 2));
+  // Bots and the owner are left out of the visit list unless all=1 asks for
+  // everything; how many were left out is reported alongside.
+  const everything = visitsFrom(replies.slice(days, withBotLog ? days * 3 : days * 2));
+  const showAll = url.searchParams.get("all") === "1";
+  const visits = showAll ? everything : everything.filter((v) => !v.bot && (includeOwner || !v.mine));
   const logStart = replies[replies.length - 1] || null;
 
   const totals = { views: 0, visits: 0, leads: 0 };
@@ -881,8 +891,7 @@ async function report(req, res) {
     botCities: ranked(botGroups.cities),
     botSources: ranked(botGroups.sources),
     daily,
-    // One row per visit, newest first. Bots' and the owner's visits carry a
-    // flag and are filtered on the page, so the toggles need no reload.
+    // One row per visit, newest first, without bots or the owner.
     logStart,
     botLog: withBotLog,
     visitCount: visits.length,

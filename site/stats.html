@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/css/site.css">
+<link rel="stylesheet" href="/assets/css/site.css?v=5eed844cdf">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -44,10 +44,10 @@
 <div class="pagehead"><div class="wrap">
   <div class="rule"></div>
   <h1>Traffic</h1>
-  <p>How many people came to the site, where they came from, and what they read. Bots are left out unless you ask for them.</p>
+  <p>Who visited, from where, and what they read. Bots and your own visits are left out.</p>
 </div></div>
 
-<section>
+<section class="st">
   <div class="wrap">
 
     <form id="keyGate" class="keygate" hidden>
@@ -58,73 +58,82 @@
         <div class="msg" id="keyMsg">That key was not accepted.</div>
       </div>
       <button class="btn" type="submit">Show the numbers</button>
-      <p class="note">Kept in this browser so you only type it once. Nothing on the
-        public site links here.</p>
+      <p class="note">Kept in this browser so you only type it once. Opening this page
+        also marks the browser as yours, so your own visits are never counted.</p>
     </form>
 
     <p id="dashNote" class="dashnote" hidden></p>
 
     <div id="dash" hidden>
-      <div class="dashbar">
-        <div class="dashrange">
-          <div class="fld">
-            <label for="rangeSel">Showing</label>
-            <select id="rangeSel">
-              <option value="today">Today</option>
-              <option value="yesterday">Yesterday</option>
-              <option value="7" selected>The last 7 days</option>
-              <option value="30">The last 30 days</option>
-              <option value="90">The last 90 days</option>
-              <option value="month">This month</option>
-              <option value="lastmonth">Last month</option>
-              <option value="365">The last 365 days</option>
-              <option value="custom">Dates I pick</option>
-            </select>
+
+      <div class="st-head">
+        <div class="st-period">
+          <button class="st-back" type="button" id="backBtn" hidden></button>
+          <div class="st-title">
+            <button class="st-step" type="button" id="prevBtn" aria-label="The period before">&lsaquo;</button>
+            <h2 id="periodTitle"></h2>
+            <button class="st-step" type="button" id="nextBtn" aria-label="The period after">&rsaquo;</button>
           </div>
-          <div class="fld fld-date">
-            <label for="fromDate">From</label>
-            <input type="date" id="fromDate">
-          </div>
-          <div class="fld fld-date">
-            <label for="toDate">To</label>
-            <input type="date" id="toDate">
-          </div>
+          <div class="st-sub" id="periodSub"></div>
         </div>
-        <label class="botswitch"><input type="checkbox" id="botToggle"> Show bots</label>
-        <label class="botswitch"><input type="checkbox" id="mineToggle" checked>
-          <span id="mineLabel">Hide my visits</span></label>
-        <div class="dashbar-act">
-          <button class="backlink" type="button" id="csvBtn">Download CSV</button>
+
+        <div class="st-pick">
+          <div class="st-chips" id="chips" role="group" aria-label="Period">
+            <button type="button" data-p="today">Today</button>
+            <button type="button" data-p="yesterday">Yesterday</button>
+            <button type="button" data-p="7">7 days</button>
+            <button type="button" data-p="30">30 days</button>
+            <button type="button" data-p="90">90 days</button>
+            <button type="button" data-p="month">This month</button>
+            <button type="button" data-p="lastmonth">Last month</button>
+            <button type="button" data-p="custom" id="customChip">Dates&hellip;</button>
+          </div>
+          <form class="st-custom" id="customForm" hidden>
+            <label>From <input type="date" id="fromDate" required></label>
+            <label>To <input type="date" id="toDate" required></label>
+            <button class="btn" type="submit">Show</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="st-body" id="stBody">
+        <div class="st-tiles" id="tiles"></div>
+
+        <div class="st-card">
+          <div class="st-card-h">
+            <h3 id="chartHead">Visits per day</h3>
+            <span class="st-hint" id="chartHint"></span>
+          </div>
+          <div class="st-chart" id="chart"></div>
+          <div class="st-axis" id="axis"></div>
+        </div>
+
+        <div class="st-grid" id="breakdowns"></div>
+
+        <div class="st-card">
+          <div class="st-card-h st-log-h">
+            <h3 id="visitsHead">Visits</h3>
+            <div class="st-tools">
+              <input type="search" id="filterInput" placeholder="Filter by town, state, source or page"
+                     aria-label="Filter the visits">
+              <button class="btn st-export" type="button" id="csvBtn">Export CSV</button>
+            </div>
+          </div>
+          <div class="st-filter" id="filterChip" hidden></div>
+          <div id="visitLog"></div>
+        </div>
+
+      </div>
+
+      <div class="st-foot">
+        <p id="excluded"></p>
+        <p id="ownerNote"></p>
+        <p class="st-foot-act">
+          <button class="backlink" type="button" id="dailyCsvBtn">Daily totals (CSV)</button>
           <button class="backlink" type="button" id="forgetBtn">Forget key</button>
-        </div>
+        </p>
+        <p class="note" id="dashFoot"></p>
       </div>
-
-      <p class="dayback" id="dayBack" hidden>
-        <button class="backlink" type="button" id="dayBackBtn"></button>
-      </p>
-
-      <div class="tiles" id="tiles"></div>
-
-      <div class="panel">
-        <h2>Day by day</h2>
-        <div class="chart" id="chart"></div>
-        <div class="legend">
-          <span><i class="sw sw-view"></i> Page views</span>
-          <span><i class="sw sw-visit"></i> Visits</span>
-          <span class="bot-only" hidden><i class="sw sw-bot"></i> Bot page views</span>
-          <span class="legend-tip">Click a day to see it alone</span>
-        </div>
-        <div class="dtbl-wrap" id="dayTable"></div>
-      </div>
-
-      <div class="panel">
-        <h2 id="visitsHead">Visits</h2>
-        <div id="visitLog"></div>
-      </div>
-
-      <div class="panels" id="panels"></div>
-
-      <p class="note" id="dashFoot"></p>
     </div>
 
   </div>
@@ -150,7 +159,7 @@
     We purchase land directly and are not licensed real estate agents or brokers.
   </div>
 </div></footer>
-<script src="/assets/js/site.js" defer></script>
-<script src="/assets/js/stats.js" defer></script>
+<script src="/assets/js/site.js?v=7adb480810" defer></script>
+<script src="/assets/js/stats.js?v=6463fcfe35" defer></script>
 </body>
 </html>
