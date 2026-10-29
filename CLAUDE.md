@@ -106,11 +106,17 @@ while integrations are half-configured.
 ## Traffic
 
 `/stats` is a private dashboard: visits, page views, offer requests, and where
-visitors came from (referrer or campaign, country, state, city, device). It is
-noindex, `Disallow`ed, unlinked, and gated on the `TRAFFIC_KEY` env var.
+visitors came from (referrer or campaign, country, state, city, device), for any
+date range up to 400 days, with a click-through to any single day and a
+visit-by-visit log that the CSV export includes. It is noindex, `Disallow`ed,
+unlinked, and gated on the `TRAFFIC_KEY` env var.
 
 Every page beacons to `POST /api/track`, which increments fields in a per-day
-Redis hash — **counters only**, no row per visitor, no IP, no cookie. Geography
+Redis hash and appends a line to a per-day visit log (`htl:l:<day>`, bots in
+`htl:lb:<day>`, each capped per day). Lines are joined into visits by a random
+id the tab keeps in sessionStorage — no IP, no cookie, nothing that outlives
+the tab. The log began on the day it shipped (`htl:logstart`); earlier days
+have totals only. The privacy page describes the log; keep it in step. Geography
 comes from Vercel's `x-vercel-ip-*` headers. It uses the same Redis the Call
 Desk relay uses and accepts the same variable names, so a project set up for
 the desk needs nothing added. No store means nothing is recorded and the

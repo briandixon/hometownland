@@ -19,15 +19,64 @@ ROOT = pathlib.Path(__file__).parent / "site"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8322
 
 
-def sample_traffic(days):
+SAMPLE_PAGES = ["/", "/how-it-works", "/faq", "/about", "/contact", "/sell"]
+SAMPLE_PLACES = [("Sanford", "NC"), ("Charlotte", "NC"), ("Raleigh", "NC"),
+                 ("Dallas", "TX"), ("Greenville", "SC"), ("Walpole", "MA")]
+SAMPLE_SOURCES = ["Google", "Direct / typed in", "Facebook", "Bing", "landwatch.com"]
+
+
+def sample_visits(date, count, bots, rnd):
+    """Invented visit-log rows for one day, in the shape /api/track returns."""
+    out = []
+    for i in range(count + bots):
+        bot = i >= count
+        minute = rnd.randint(0, 24 * 60 - 1)
+        city, region = ("Ashburn", "VA") if bot else rnd.choice(SAMPLE_PLACES)
+        pages = ["/"] + rnd.sample(SAMPLE_PAGES[1:], rnd.randint(0, 3))
+        form = "" if bot else rnd.choice(["", "", "", "", "Started", "Reached step 2", "Sent"])
+        y, m, d = map(int, date.split("-"))
+        at = int(datetime.datetime(y, m, d, minute // 60, minute % 60).timestamp() * 1000)
+        out.append({
+            "at": at, "date": date,
+            "time": datetime.time(minute // 60, minute % 60).strftime("%I:%M %p").lstrip("0"),
+            "pages": pages, "source": rnd.choice(SAMPLE_SOURCES), "campaign": "",
+            "city": city, "region": region, "country": "US",
+            "device": rnd.choice(["Phone", "Phone", "Desktop", "Tablet"]),
+            "form": form, "bot": bot, "score": rnd.choice([60, 80, 100]) if bot else rnd.choice([0, 10, 20]),
+            "botReason": "Data-center city" if bot else "", "mine": city == "Walpole",
+        })
+    return out
+
+
+def sample_range(query):
+    """The from/to (or days) a dashboard request asks for, as a list of dates."""
+    today = datetime.date.today()
+    params = dict(part.partition("=")[::2] for part in query.split("&") if part)
+    try:
+        start = datetime.date.fromisoformat(params["from"])
+        end = min(datetime.date.fromisoformat(params["to"]), today)
+        if start > end:
+            start, end = end, start
+    except (KeyError, ValueError):
+        try:
+            days = max(1, min(int(params.get("days", 30)), 400))
+        except ValueError:
+            days = 30
+        start, end = today - datetime.timedelta(days=days - 1), today
+    start = max(start, end - datetime.timedelta(days=399))
+    return [(start + datetime.timedelta(days=i)).isoformat()
+            for i in range((end - start).days + 1)], params
+
+
+def sample_traffic(dates, params):
     """Invented numbers for the dashboard, so the page can be looked at locally.
 
     Deterministic per day, so a reload does not reshuffle the chart and make a
     layout change look like a data change.
     """
-    today = datetime.date.today()
-    dates = [(today - datetime.timedelta(days=i)).isoformat() for i in range(days - 1, -1, -1)]
-    daily, views, visits, leads = [], 0, 0, 0
+    days = len(dates)
+    log_start = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
+    daily, views, visits, leads, log = [], 0, 0, 0, []
     for d in dates:
         rnd = random.Random(d)
         v = rnd.randint(8, 70)
@@ -37,6 +86,9 @@ def sample_traffic(days):
         daily.append({"date": d, "views": v, "visits": s, "leads": ld,
                       "botViews": bv, "botVisits": max(1, bv // 2)})
         views, visits, leads = views + v, visits + s, leads + ld
+        if d >= log_start:
+            log += sample_visits(d, s, max(1, bv // 2) if params.get("bots") == "1" else 0, rnd)
+    log.sort(key=lambda r: -r["at"])
 
     def rows(pairs):
         return [{"name": n, "count": c} for n, c in pairs]
@@ -50,6 +102,12 @@ def sample_traffic(days):
         "to": dates[-1],
         "totals": {"views": views, "visits": visits, "leads": leads},
         "daily": daily,
+        "logStart": log_start,
+        "owner": {"towns": ["Walpole, MA"], "included": params.get("mine") == "include",
+                  "hidden": {"views": 0, "visits": 0, "leads": 0}},
+        "botLog": params.get("bots") == "1",
+        "visitCount": len(log),
+        "visits": log[:5000],
         "bots": {"views": sum(d["botViews"] for d in daily),
                  "visits": sum(d["botVisits"] for d in daily)},
         "funnel": {"starts": leads * 4 + 2, "step2": leads * 3 + 1,
@@ -101,14 +159,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.split("?")[0].rstrip("/") == "/api/track":
-            days = 30
-            for part in self.path.partition("?")[2].split("&"):
-                if part.startswith("days="):
-                    try:
-                        days = max(1, min(int(part[5:]), 120))
-                    except ValueError:
-                        pass
-            return self.reply_json(sample_traffic(days))
+            dates, params = sample_range(self.path.partition("?")[2])
+            return self.reply_json(sample_traffic(dates, params))
         return super().do_GET()
 
     def do_POST(self):

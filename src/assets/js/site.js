@@ -1,10 +1,11 @@
 /* Hometown Land — site behaviour: the traffic beacon, then the offer form. */
 
 /* Traffic beacon.
-   Tells /api/track that a page was read. Aggregate counts only: no cookie, no
-   identifier, nothing that outlives the browser tab. The one thing kept per
-   visit is a sessionStorage marker saying "this tab has already been counted",
-   so a person reading four pages is one visit rather than four.
+   Tells /api/track that a page was read. No cookie and nothing that outlives
+   the browser tab. The one thing kept per visit is a sessionStorage marker
+   saying "this tab has already been counted", so a person reading four pages
+   is one visit rather than four, with a random id made up for the tab so the
+   visit log can put those four pages on one line. Closing the tab forgets it.
    A visitor sending Do Not Track is not counted at all.
 
    The beacon waits until the page has been read before it goes: the first
@@ -43,23 +44,31 @@
   var dnt = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
   if (dnt === "1" || dnt === "yes") return;
 
-  /* The visit marker, "pages|touched": how many pages this tab has shown and
-     whether any of them was scrolled, clicked or typed in. sessionStorage is
-     per tab and emptied when the tab closes. Where it is unavailable -- private
-     modes block it -- fall back to "did they arrive from somewhere other than
-     this site", and go without the page count. */
+  /* The visit marker, "pages|touched|id": how many pages this tab has shown,
+     whether any of them was scrolled, clicked or typed in, and the tab's
+     random visit id. sessionStorage is per tab and emptied when the tab
+     closes. Where it is unavailable -- private modes block it -- fall back to
+     "did they arrive from somewhere other than this site", go without the page
+     count, and each page gets an id of its own. */
   var MARK = "htl.seen";
-  var pages = 0, touchedBefore = false, first;
+  var pages = 0, touchedBefore = false, first, visitId = "";
   try {
     var mark = (sessionStorage.getItem(MARK) || "").split("|");
     first = !mark[0];
     pages = (parseInt(mark[0], 10) || 0) + 1;
     touchedBefore = mark[1] === "1";
+    visitId = /^[a-z0-9]{6,16}$/.test(mark[2] || "") ? mark[2] : "";
   } catch (e) {
     first = document.referrer.indexOf(location.origin) !== 0;
   }
+  if (!visitId) {
+    visitId = (Math.random().toString(36) + Math.random().toString(36))
+      .replace(/[^a-z0-9]/g, "").slice(0, 12);
+  }
   function saveMark(touched) {
-    try { sessionStorage.setItem(MARK, pages + "|" + (touched || touchedBefore ? 1 : 0)); } catch (e) {}
+    try {
+      sessionStorage.setItem(MARK, pages + "|" + (touched || touchedBefore ? 1 : 0) + "|" + visitId);
+    } catch (e) {}
   }
   saveMark(false);
 
@@ -74,6 +83,7 @@
     sent = true;
     post({
       v: 2,
+      id: visitId,
       p: location.pathname,
       r: document.referrer,
       s: q.get("utm_source") || q.get("ref") || "",
@@ -105,7 +115,7 @@
   /* Named events: the offer form's progress and a submitted request, so the
      dashboard can show where people drop out of the form. */
   window.htlEvent = function (name, extra) {
-    var payload = { e: name };
+    var payload = { e: name, id: visitId };
     if (extra) for (var k in extra) payload[k] = extra[k];
     post(payload);
   };
