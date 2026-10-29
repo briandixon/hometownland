@@ -88,6 +88,8 @@ def sample_traffic(dates, params):
         views, visits, leads = views + v, visits + s, leads + ld
         if d >= log_start:
             log += sample_visits(d, s, max(1, bv // 2) if params.get("bots") == "1" else 0, rnd)
+    # The real endpoint leaves bots and the owner out of the visit list.
+    log = [r for r in log if not r["bot"] and not r["mine"]]
     log.sort(key=lambda r: -r["at"])
 
     def rows(pairs):

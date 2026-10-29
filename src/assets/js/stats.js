@@ -1,7 +1,12 @@
 /* Hometown Land — the /stats dashboard.
-   Reads the counters and the visit log from /api/track and draws them. The key is held
-   in this browser only; it is sent as a header rather than in the URL so it
-   does not end up in a log or a shared link. */
+   Reads the counters and the visit log from /api/track for whatever period is
+   picked, and draws them. Bots and the owner's own visits are left out by the
+   server. The key is held in this browser only and sent as a header rather
+   than in the URL, so it does not end up in a log or a shared link.
+
+   The period lives in the address (#from=…&to=…) and every change of period
+   is a history entry, so the browser's Back button walks back through what
+   was looked at: last 7 days, then one day of it, then a 3-day stretch. */
 (function () {
   "use strict";
 
@@ -9,67 +14,222 @@
   if (!gate) return;
 
   var KEY_STORE = "htl.statskey";
-  var MINE_STORE = "htl.statsmine";
-  var dash = document.getElementById("dash");
-  var note = document.getElementById("dashNote");
-  var keyInput = document.getElementById("keyInput");
-  var keyMsg = document.getElementById("keyMsg");
-  var rangeSel = document.getElementById("rangeSel");
-  var fromDate = document.getElementById("fromDate");
-  var toDate = document.getElementById("toDate");
-  var dayBack = document.getElementById("dayBack");
-  var dayBackBtn = document.getElementById("dayBackBtn");
-  var botToggle = document.getElementById("botToggle");
-  var mineToggle = document.getElementById("mineToggle");
-  var latest = null;
-  var shownVisits = 100;      /* rows of the visit log on screen; "Show more" adds to it */
-  var before = null;          /* the range to go back to after looking at one day */
+  var OWNER_STORE = "htl.owner";   /* read by site.js: this browser is the owner's */
+  var EARLIEST = 399;              /* days back the server keeps */
+  var PAGE = 50;                   /* visit rows drawn at a time */
 
-  /* ---- dates. Every day is an Eastern-time calendar day, as the server
-     keeps them, and is handled as a "YYYY-MM-DD" string so no browser
-     timezone can move it. */
-  function todayET() {
+  var $ = function (id) { return document.getElementById(id); };
+  var dash = $("dash"), note = $("dashNote"), keyInput = $("keyInput"), keyMsg = $("keyMsg");
+  var body = $("stBody"), chips = $("chips"), customForm = $("customForm");
+  var fromDate = $("fromDate"), toDate = $("toDate"), filterInput = $("filterInput");
+
+  var range = null;        /* { from, to } on screen */
+  var latest = null;       /* the last report */
+  var shown = PAGE;
+  var pick = null;         /* a breakdown row clicked: { kind, value, label } */
+  var asked = 0;           /* request counter, so a slow answer cannot overwrite a newer one */
+
+  /* ------------------------------------------------------------ storage */
+
+  function get(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }
+  function put(k, v) {
+    try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch (e) {}
+  }
+
+  /* -------------------------------------------------------------- dates
+     Every day is an Eastern-time calendar day, as the server keeps them, and
+     handled as a "YYYY-MM-DD" string so no browser timezone can move it. */
+
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  var MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July",
+                     "August", "September", "October", "November", "December"];
+  var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var DAYS_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+  function today() {
     return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   }
+  function parts(iso) { return iso.split("-").map(Number); }
   function addDays(iso, n) {
-    var p = iso.split("-").map(Number);
+    var p = parts(iso);
     return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
   }
+  function span(from, to) {
+    var a = parts(from), b = parts(to);
+    return Math.round((Date.UTC(b[0], b[1] - 1, b[2]) - Date.UTC(a[0], a[1] - 1, a[2])) / 86400000) + 1;
+  }
+  function weekday(iso, long) {
+    var p = parts(iso);
+    var d = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay();
+    return (long ? DAYS_LONG : DAYS)[d];
+  }
+  function short(iso) { var p = parts(iso); return MONTHS[p[1] - 1] + " " + p[2]; }
+  function withYear(iso) { return short(iso) + ", " + parts(iso)[0]; }
+  function monthStart(iso) { return iso.slice(0, 8) + "01"; }
+  function monthEnd(iso) { return addDays(monthStart(addDays(monthStart(iso), 32)), -1); }
+  function earliest() { return addDays(today(), -EARLIEST); }
 
-  /* A preset from the "Showing" list as a from/to pair. */
-  function presetRange(v) {
-    var t = todayET();
-    if (v === "today") return [t, t];
-    if (v === "yesterday") return [addDays(t, -1), addDays(t, -1)];
-    if (v === "month") return [t.slice(0, 8) + "01", t];
-    if (v === "lastmonth") {
-      var end = addDays(t.slice(0, 8) + "01", -1);
-      return [end.slice(0, 8) + "01", end];
+  function clamp(r) {
+    var t = today(), lo = earliest();
+    var from = r.from, to = r.to;
+    if (from > to) { var x = from; from = to; to = x; }
+    if (to > t) to = t;
+    if (from < lo) from = lo;
+    if (from > to) from = to;
+    return { from: from, to: to };
+  }
+
+  var PRESETS = {
+    today: function (t) { return { from: t, to: t }; },
+    yesterday: function (t) { var y = addDays(t, -1); return { from: y, to: y }; },
+    "7": function (t) { return { from: addDays(t, -6), to: t }; },
+    "30": function (t) { return { from: addDays(t, -29), to: t }; },
+    "90": function (t) { return { from: addDays(t, -89), to: t }; },
+    month: function (t) { return { from: monthStart(t), to: t }; },
+    lastmonth: function (t) {
+      var end = addDays(monthStart(t), -1);
+      return { from: monthStart(end), to: end };
     }
-    var n = Number(v) || 7;
-    return [addDays(t, 1 - n), t];
+  };
+  var PRESET_NAMES = {
+    today: "Today", yesterday: "Yesterday", "7": "Last 7 days", "30": "Last 30 days",
+    "90": "Last 90 days", month: "This month", lastmonth: "Last month"
+  };
+
+  /* Which preset, if any, a range is. */
+  function presetOf(r) {
+    var t = today();
+    for (var k in PRESETS) {
+      var p = PRESETS[k](t);
+      if (p.from === r.from && p.to === r.to) return k;
+    }
+    return "";
+  }
+  function isWholeMonth(r) {
+    return r.from === monthStart(r.from) && monthStart(r.to) === r.from
+      && (r.to === monthEnd(r.from) || r.to === today());
   }
 
-  function setRange(from, to) {
-    fromDate.value = from;
-    toDate.value = to;
+  /* The title for a range, as a person would say it. */
+  function titleOf(r) {
+    var p = presetOf(r);
+    if (p) return PRESET_NAMES[p];
+    if (r.from === r.to) return weekday(r.from, true) + ", " + short(r.from);
+    if (isWholeMonth(r)) return MONTHS_LONG[parts(r.from)[1] - 1] + " " + parts(r.from)[0];
+    return short(r.from) + " – " + short(r.to);
+  }
+  function subOf(r) {
+    if (r.from === r.to) return weekday(r.from, true) + ", " + withYear(r.from);
+    return withYear(r.from) + " – " + withYear(r.to) + " · " + span(r.from, r.to) + " days";
   }
 
-  function rangeLabel(from, to) {
-    return from === to ? longDate(from) : longDate(from) + " – " + longDate(to);
+  /* ------------------------------------------------------------ helpers */
+
+  function num(n) { return (n || 0).toLocaleString("en-US"); }
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
   }
 
-  function remembered() {
-    try { return localStorage.getItem(KEY_STORE) || ""; } catch (e) { return ""; }
+  var STATES = {
+    AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+    CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia",
+    FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana",
+    IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
+    MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri",
+    MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey",
+    NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio",
+    OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island",
+    SC: "South Carolina", SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah",
+    VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin",
+    WY: "Wyoming", PR: "Puerto Rico"
+  };
+
+  /* "Sanford, NC" at home, "Toronto, ON, CA" abroad. */
+  function place(v) {
+    var bits = [v.city, v.region];
+    if (v.country && v.country !== "US") bits.push(v.country);
+    return bits.filter(Boolean).join(", ");
   }
-  function remember(k) {
-    try { k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE); } catch (e) {}
+  /* The counters name a city "Sanford, NC, US" and a state "US-NC". */
+  function cityName(raw) { return String(raw).replace(/, US$/, ""); }
+  function stateName(raw) {
+    var m = /^US-([A-Z]{2})$/.exec(raw);
+    return m ? (STATES[m[1]] || m[1]) : raw;
   }
 
-  /* Hiding the owner's own visits is the default; showing them is remembered. */
-  function hideMine() {
-    try { return localStorage.getItem(MINE_STORE) !== "show"; } catch (e) { return true; }
+  /* ------------------------------------------------------------ the period */
+
+  function hashOf(r) { return "#from=" + r.from + "&to=" + r.to; }
+  function fromHash() {
+    var q = new URLSearchParams(location.hash.slice(1));
+    var from = q.get("from"), to = q.get("to"), p = q.get("p");
+    if (p && PRESETS[p]) return PRESETS[p](today());
+    if (/^\d{4}-\d{2}-\d{2}$/.test(from || "") && /^\d{4}-\d{2}-\d{2}$/.test(to || "")) {
+      return clamp({ from: from, to: to });
+    }
+    return PRESETS["7"](today());
   }
+
+  /* Go to a period: a new history entry that remembers where we came from,
+     so "← Back to Last 7 days" can say where Back goes. */
+  function go(r) {
+    r = clamp(r);
+    if (range && r.from === range.from && r.to === range.to) { customForm.hidden = true; return; }
+    var depth = (history.state && history.state.depth) || 0;
+    history.pushState({ depth: depth + 1, back: range ? titleOf(range) : "" }, "",
+      location.pathname + hashOf(r));
+    show(r);
+  }
+
+  function show(r) {
+    range = r;
+    pick = null;
+    filterInput.value = "";
+    shown = PAGE;
+    customForm.hidden = true;
+    drawHead();
+    load();
+  }
+
+  function drawHead() {
+    $("periodTitle").textContent = titleOf(range);
+    $("periodSub").textContent = subOf(range);
+    var st = history.state || {};
+    var back = $("backBtn");
+    back.hidden = !(st.depth && st.back);
+    back.textContent = "← Back to " + (st.back || "");
+
+    $("prevBtn").disabled = range.from <= earliest();
+    $("nextBtn").disabled = range.to >= today();
+
+    var p = presetOf(range);
+    Array.prototype.forEach.call(chips.querySelectorAll("button"), function (b) {
+      var on = b.getAttribute("data-p") === (p || "custom");
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    fromDate.value = range.from;
+    toDate.value = range.to;
+    fromDate.min = toDate.min = earliest();
+    fromDate.max = toDate.max = today();
+  }
+
+  /* ‹ and ›: the same length of time before or after. A whole month steps by
+     calendar month, so "October" goes to "September", not 31 days earlier. */
+  function step(dir) {
+    if (isWholeMonth(range)) {
+      var start = dir < 0 ? monthStart(addDays(range.from, -1)) : addDays(monthEnd(range.from), 1);
+      return go({ from: start, to: monthEnd(start) });
+    }
+    var n = span(range.from, range.to);
+    go({ from: addDays(range.from, dir * n), to: addDays(range.to, dir * n) });
+  }
+
+  /* ---------------------------------------------------------------- data */
 
   function say(text) {
     note.textContent = text || "";
@@ -84,341 +244,25 @@
     keyInput.focus();
   }
 
-  function num(n) { return (n || 0).toLocaleString("en-US"); }
-
-  var DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  /* "2026-09-21" -> "Mon, Sep 21, 2026" */
-  function longDate(iso) {
-    var p = iso.split("-").map(Number);
-    var dow = new Date(Date.UTC(p[0], p[1] - 1, p[2])).getUTCDay();
-    return DAYS[dow] + ", " + shortDate(iso) + ", " + p[0];
-  }
-
-  /* "2026-09-21" -> "Sep 21". Split by hand: new Date("2026-09-21") is UTC
-     midnight, which shows as the day before once it is rendered locally. */
-  function shortDate(iso) {
-    var p = iso.split("-");
-    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    return months[Number(p[1]) - 1] + " " + Number(p[2]);
-  }
-
-  function el(tag, cls, text) {
-    var e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== undefined) e.textContent = text;
-    return e;
-  }
-
-  function tile(label, value, sub) {
-    var t = el("div", "tile");
-    t.appendChild(el("div", "tile-n", value));
-    t.appendChild(el("div", "tile-l", label));
-    if (sub) t.appendChild(el("div", "tile-s", sub));
-    return t;
-  }
-
-  /* One table: name, a bar for its share, the count. */
-  function panel(title, rows, empty) {
-    var box = el("div", "panel");
-    box.appendChild(el("h2", null, title));
-    if (!rows || !rows.length) {
-      box.appendChild(el("p", "note", empty));
-      return box;
-    }
-    var top = rows.reduce(function (m, r) { return Math.max(m, r.count); }, 0) || 1;
-    var list = el("div", "tbl");
-    rows.forEach(function (r) {
-      var row = el("div", "tr");
-      row.appendChild(el("span", "td-n", r.name));
-      var track = el("span", "td-b");
-      var fill = el("i");
-      fill.style.width = Math.max(2, Math.round((r.count / top) * 100)) + "%";
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(el("span", "td-c", num(r.count)));
-      list.appendChild(row);
-    });
-    box.appendChild(list);
-    return box;
-  }
-
-  /* Each day is one bar: people's page views, their visits drawn inside it,
-     and with "Show bots" on, the bots' page views stacked on top. */
-  function drawChart(daily, withBots) {
-    var chart = document.getElementById("chart");
-    chart.textContent = "";
-    function total(d) { return d.views + (withBots ? d.botViews || 0 : 0); }
-    var peak = daily.reduce(function (m, d) { return Math.max(m, total(d)); }, 0) || 1;
-
-    daily.forEach(function (d) {
-      var col = el("div", "col");
-      col.addEventListener("click", function () { openDay(d.date); });
-      var all = total(d);
-      col.title = shortDate(d.date) + ": " + num(d.views) + " views, "
-                + num(d.visits) + " visits"
-                + (d.leads ? ", " + num(d.leads) + " offer requests" : "")
-                + (withBots ? "; bots: " + num(d.botViews) + " views" : "")
-                + " — click to see this day";
-      var bar = el("span", "bar");
-      bar.style.height = Math.max(1, Math.round((all / peak) * 100)) + "%";
-      var inner = el("i");
-      inner.style.height = all ? Math.round((d.visits / all) * 100) + "%" : "0";
-      bar.appendChild(inner);
-      if (withBots && d.botViews) {
-        var bots = el("b");
-        bots.style.top = "0";
-        bots.style.height = Math.round((d.botViews / all) * 100) + "%";
-        bar.appendChild(bots);
-      }
-      col.appendChild(bar);
-      chart.appendChild(col);
-    });
-
-    /* Only the ends get a label, otherwise 90 days of dates collide. */
-    if (daily.length) {
-      var ends = el("div", "chart-ends");
-      ends.appendChild(el("span", null, shortDate(daily[0].date)));
-      ends.appendChild(el("span", null, shortDate(daily[daily.length - 1].date)));
-      chart.parentNode.insertBefore(ends, chart.nextSibling);
-    }
-  }
-
-  /* The same days as the chart, as numbers, newest first. A row opens its day. */
-  function drawDayTable(daily, withBots) {
-    var box = document.getElementById("dayTable");
-    box.textContent = "";
-    if (daily.length < 2) { box.hidden = true; return; }
-    box.hidden = false;
-    var t = el("table", "dtbl");
-    var head = el("tr");
-    ["Day", "Visits", "Page views", "Offer requests"].concat(withBots ? ["Bot visits", "Bot views"] : [])
-      .forEach(function (h, i) { head.appendChild(el("th", i ? "n" : null, h)); });
-    var thead = el("thead");
-    thead.appendChild(head);
-    t.appendChild(thead);
-    var body = el("tbody");
-    daily.slice().reverse().forEach(function (d) {
-      var tr = el("tr", "go");
-      tr.title = "See " + longDate(d.date) + " alone";
-      tr.addEventListener("click", function () { openDay(d.date); });
-      tr.appendChild(el("td", null, longDate(d.date)));
-      [d.visits, d.views, d.leads].concat(withBots ? [d.botVisits || 0, d.botViews || 0] : [])
-        .forEach(function (n) { tr.appendChild(el("td", "n", num(n))); });
-      body.appendChild(tr);
-    });
-    t.appendChild(body);
-    box.appendChild(t);
-  }
-
-  /* The visit log as the toggles want it: bots only with "Show bots", the
-     owner's own only with "Hide my visits" off. */
-  function visibleVisits(data, withBots, hideOwn) {
-    return (data.visits || []).filter(function (v) {
-      return (withBots || !v.bot) && (!hideOwn || !v.mine);
-    });
-  }
-
-  function place(v) {
-    if (v.country === "US") return [v.city, v.region].filter(Boolean).join(", ");
-    return [v.city, v.country].filter(Boolean).join(", ");
-  }
-
-  function drawVisits(data, withBots, hideOwn) {
-    var box = document.getElementById("visitLog");
-    var rows = visibleVisits(data, withBots, hideOwn);
-    var oneDay = data.from === data.to;
-    box.textContent = "";
-    document.getElementById("visitsHead").textContent =
-      "Visits, one by one" + (rows.length ? " (" + num(rows.length) + ")" : "");
-
-    if (!rows.length) {
-      var why = "No visits were logged in this period.";
-      if (!data.logStart || data.to < data.logStart) {
-        why = "The visit-by-visit log " + (data.logStart
-          ? "began on " + longDate(data.logStart) + ", so it has nothing for these days. "
-          : "has not recorded anything yet. ")
-          + "The totals above still cover them.";
-      }
-      box.appendChild(el("p", "note", why));
-      return;
-    }
-
-    var wrap = el("div", "vlog-wrap");
-    var t = el("table", "dtbl vtbl");
-    var head = el("tr");
-    [oneDay ? "Time" : "When", "Pages", "Came from", "Where", "Device"]
-      .forEach(function (h) { head.appendChild(el("th", null, h)); });
-    var thead = el("thead");
-    thead.appendChild(head);
-    t.appendChild(thead);
-    var body = el("tbody");
-    rows.slice(0, shownVisits).forEach(function (v) {
-      var tr = el("tr");
-      tr.appendChild(el("td", "when", oneDay ? v.time : shortDate(v.date) + ", " + v.time));
-
-      var pg = el("td");
-      pg.appendChild(document.createTextNode(v.pages.length + (v.pages.length === 1 ? " page" : " pages")));
-      if (v.form) pg.appendChild(el("span", "tag" + (v.form === "Sent" ? " tag-lead" : ""),
-        v.form === "Sent" ? "Sent the form" : "Form: " + v.form.toLowerCase()));
-      if (v.bot) pg.appendChild(el("span", "tag tag-bot", "Bot " + v.score));
-      if (v.mine) pg.appendChild(el("span", "tag", "You"));
-      pg.appendChild(el("div", "path", v.pages.join(" → ")));
-      tr.appendChild(pg);
-
-      tr.appendChild(el("td", null, (v.source || "—") + (v.campaign ? " (" + v.campaign + ")" : "")));
-      tr.appendChild(el("td", null, place(v) || "—"));
-      tr.appendChild(el("td", null, v.device || "—"));
-      body.appendChild(tr);
-    });
-    t.appendChild(body);
-    wrap.appendChild(t);
-    box.appendChild(wrap);
-
-    if (rows.length > shownVisits) {
-      var more = el("button", "backlink vlog-more",
-        "Show more (" + num(rows.length - shownVisits) + " not shown)");
-      more.type = "button";
-      more.addEventListener("click", function () { shownVisits += 200; render(latest); });
-      box.appendChild(more);
-    }
-    if (data.visitCount > (data.visits || []).length) {
-      box.appendChild(el("p", "note", "The newest " + num(data.visits.length) + " of "
-        + num(data.visitCount) + " visits are shown and exported; pick a shorter range for the rest."));
-    }
-  }
-
-  /* Look at one day on its own; the button above the tiles goes back. */
-  function openDay(date) {
-    if (fromDate.value === date && toDate.value === date) return;
-    if (!before) before = [fromDate.value, toDate.value, rangeSel.value];
-    rangeSel.value = "custom";
-    setRange(date, date);
-    load();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function render(data) {
-    latest = data;
-    gate.hidden = true;
-    dash.hidden = false;
-    say("");
-
-    var t = data.totals;
-    var f = data.funnel || { starts: 0, step2: 0, step3: 0, submits: t.leads };
-    var b = data.bots || { views: 0, visits: 0 };
-    var me = data.owner || { towns: [], included: true, hidden: { views: 0, visits: 0 } };
-    var mineNote = me.included ? "" : "; " + num(me.hidden.visits) + " of yours left out";
-    var withBots = botToggle.checked;
-    var perVisit = t.visits ? (t.views / t.visits).toFixed(1) : "0";
-    var rate = t.visits ? ((t.leads / t.visits) * 100).toFixed(1) + "%" : "—";
-    var finish = f.starts ? Math.round((f.submits / f.starts) * 100) + "%" : "—";
-
-    var tiles = document.getElementById("tiles");
-    tiles.textContent = "";
-    tiles.appendChild(tile("Visits", num(t.visits),
-      (withBots ? "people; plus " + num(b.visits) + " by bots" : "people, counted once per session")
-      + mineNote));
-    tiles.appendChild(tile("Page views", num(t.views),
-      withBots ? "by people; plus " + num(b.views) + " by bots" : perVisit + " pages per visit"));
-    tiles.appendChild(tile("Offer requests", num(t.leads), rate + " of visits"));
-    tiles.appendChild(tile("Form finished", finish,
-      num(f.starts) + " started it, " + num(f.submits) + " sent it"));
-
-    if (me.towns.length) {
-      document.getElementById("mineLabel").textContent =
-        "Hide my visits (" + me.towns.join(", ") + ")";
-    }
-
-    document.querySelectorAll(".bot-only").forEach(function (n) { n.hidden = !withBots; });
-    var old = document.querySelector(".chart-ends");
-    if (old) old.remove();
-    drawChart(data.daily, withBots);
-
-    if (before) {
-      dayBack.hidden = false;
-      dayBackBtn.textContent = "← Back to " + rangeLabel(before[0], before[1]);
-    } else {
-      dayBack.hidden = true;
-    }
-    drawDayTable(data.daily, withBots);
-    drawVisits(data, withBots, !me.included);
-
-    var panels = document.getElementById("panels");
-    panels.textContent = "";
-    panels.appendChild(panel("The offer form", f.starts || f.submits ? [
-      { name: "Started filling it in", count: f.starts },
-      { name: "Reached step 2", count: f.step2 },
-      { name: "Reached step 3", count: f.step3 },
-      { name: "Sent", count: f.submits }
-    ] : [], "Nobody has started the form in this period."));
-    panels.appendChild(panel("Where visits came from", data.sources,
-      "Nothing recorded yet."));
-    panels.appendChild(panel("Pages read", data.pages,
-      "Nothing recorded yet."));
-    panels.appendChild(panel("States and regions", data.regions,
-      "No region has been reported yet."));
-    panels.appendChild(panel("Cities", data.cities,
-      "No city has been reported yet."));
-    panels.appendChild(panel("Countries", data.countries,
-      "No country has been reported yet."));
-    panels.appendChild(panel("Devices", data.devices,
-      "Nothing recorded yet."));
-    if (data.campaigns && data.campaigns.length) {
-      panels.appendChild(panel("Campaigns", data.campaigns, ""));
-    }
-
-    if (withBots) {
-      panels.appendChild(panel("Why they were marked as bots", data.botReasons,
-        "No bots recorded in this period."));
-      panels.appendChild(panel("Bot cities", data.botCities, "None."));
-      panels.appendChild(panel("Bot countries", data.botCountries, "None."));
-      panels.appendChild(panel("Pages bots loaded", data.botPages, "None."));
-      var scores = (data.scores || []).filter(function (r) { return r.count; })
-        .map(function (r) {
-          var lo = Number(r.name);
-          return { name: "Score " + lo + (lo < 100 ? "–" + (lo + 9) : "")
-                   + (lo >= (data.threshold || 50) ? " (bot)" : ""), count: r.count };
-        });
-      /* Kept in score order, not by size, so the threshold reads as a line. */
-      panels.appendChild(panel("Every page view by bot score", scores, "Nothing scored yet."));
-    }
-
-    document.getElementById("dashFoot").textContent =
-      "Covering " + rangeLabel(data.from, data.to) + " (Eastern time), from the "
-      + data.store + " store. A visit is one browser session; geography comes from the "
-      + "network location of the connection, so it is accurate to the city at best and "
-      + "wrong for anyone on a VPN. Bots are scored on their browser, location and "
-      + "behaviour and kept apart from these numbers; that includes visits from "
-      + "data-center towns such as Ashburn VA and Council Bluffs IA, and anyone who "
-      + "left in under a second without touching the page. Days before bot scoring "
-      + "began still have some bots mixed in. Visitors who ask not to be tracked are "
-      + "not counted, so the real figures are a little higher than these."
-      + (me.included ? "" : " Your own visits are left out by the town they come from ("
-      + me.towns.join(", ") + "); on days before that was recorded separately, only the "
-      + "visit and location counts could be corrected, so some of your page views remain.");
-  }
-
   function load() {
-    var key = remembered();
+    var key = get(KEY_STORE);
     if (!key) return askForKey(false);
 
-    say("Loading…");
-    shownVisits = 100;
-    fetch("/api/track?from=" + encodeURIComponent(fromDate.value)
-        + "&to=" + encodeURIComponent(toDate.value)
-        + (mineToggle.checked ? "" : "&mine=include")
-        + (botToggle.checked ? "&bots=1" : ""), {
+    var mine = ++asked;
+    body.classList.add("busy");
+    fetch("/api/track?from=" + range.from + "&to=" + range.to, {
       headers: { "x-traffic-key": key },
       cache: "no-store"
     })
       .then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (body) {
-          return { status: r.status, body: body };
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          return { status: r.status, body: b };
         });
       })
       .then(function (res) {
-        if (res.status === 401) { remember(""); return askForKey(true); }
+        if (mine !== asked) return;
+        body.classList.remove("busy");
+        if (res.status === 401) { put(KEY_STORE, ""); return askForKey(true); }
         if (res.status === 503) {
           dash.hidden = true;
           gate.hidden = true;
@@ -426,7 +270,6 @@
                    + "Vercel project settings and redeploy.");
         }
         if (!res.body || !res.body.ok) {
-          dash.hidden = true;
           return say("The dashboard could not read the numbers: "
                    + ((res.body && res.body.error) || "HTTP " + res.status) + ".");
         }
@@ -435,125 +278,418 @@
           gate.hidden = true;
           return say(res.body.note);
         }
-        render(res.body);
+        /* A key that works means this is the owner's browser. */
+        put(OWNER_STORE, "1");
+        say("");
+        gate.hidden = true;
+        dash.hidden = false;
+        latest = res.body;
+        render();
       })
       .catch(function () {
+        if (mine !== asked) return;
+        body.classList.remove("busy");
         say("Could not reach /api/track. Check the connection and try again.");
       });
   }
 
-  /* A CSV of what is on screen, for a spreadsheet or for sending on: the
-     days, every visit with its date and time, then the tables. */
-  function csv() {
-    if (!latest) return;
-    function cell(v) { return '"' + String(v === undefined || v === null ? "" : v).replace(/"/g, '""') + '"'; }
-    var lines = [["Date", "Visits", "Page views", "Offer requests",
-                  "Bot visits", "Bot page views"].join(",")];
-    latest.daily.forEach(function (d) {
-      lines.push([d.date, d.visits, d.views, d.leads, d.botVisits || 0, d.botViews || 0].join(","));
+  /* -------------------------------------------------------------- render */
+
+  function render() {
+    var d = latest;
+    var t = d.totals;
+    var f = d.funnel || { starts: 0, submits: 0 };
+
+    var tiles = $("tiles");
+    tiles.textContent = "";
+    [
+      ["Visits", num(t.visits), "people, once per visit"],
+      ["Page views", num(t.views), t.visits ? (t.views / t.visits).toFixed(1) + " pages per visit" : "—"],
+      ["Offer requests", num(t.leads), t.visits ? ((t.leads / t.visits) * 100).toFixed(1) + "% of visits" : "—"],
+      ["Form started", num(f.starts), f.starts ? num(f.submits) + " of them sent it" : "nobody yet"]
+    ].forEach(function (x) {
+      var tile = el("div", "st-tile");
+      tile.appendChild(el("div", "st-tile-n", x[1]));
+      tile.appendChild(el("div", "st-tile-l", x[0]));
+      tile.appendChild(el("div", "st-tile-s", x[2]));
+      tiles.appendChild(tile);
     });
 
-    /* Every visit, oldest first, as the toggles have it. */
-    var visits = visibleVisits(latest, botToggle.checked, !(latest.owner || {}).included);
-    if (visits.length) {
-      lines.push("");
-      lines.push(["Visit date", "Time (Eastern)", "Landing page", "Pages viewed", "Pages in order",
-                  "Came from", "Campaign", "City", "State/region", "Country", "Device",
-                  "Offer form", "Bot", "Bot score", "Your visit"].join(","));
-      visits.slice().reverse().forEach(function (v) {
-        lines.push([v.date, v.time, v.pages[0], v.pages.length, v.pages.join(" > "),
-                    v.source, v.campaign, v.city, v.region, v.country, v.device,
-                    v.form, v.bot ? "yes" : "", v.score, v.mine ? "yes" : ""].map(cell).join(","));
+    if (range.from === range.to) drawHours(); else drawDays();
+    drawVisits();
+    drawBreakdowns();
+    drawFoot();
+  }
+
+  /* ---- the chart: a bar per day. Click a bar for that day; drag across
+     bars for the days in between. */
+
+  function drawBars(items, labelOf, tipOf) {
+    var chart = $("chart");
+    chart.textContent = "";
+    var peak = items.reduce(function (m, x) { return Math.max(m, x.n); }, 0) || 1;
+    items.forEach(function (x) {
+      var col = el("div", "st-col");
+      col.title = tipOf(x);
+      var bar = el("span", "st-bar");
+      bar.style.height = x.n ? Math.max(3, Math.round((x.n / peak) * 100)) + "%" : "0";
+      if (x.n) bar.appendChild(el("em", null, num(x.n)));
+      col.appendChild(bar);
+      chart.appendChild(col);
+    });
+    chart.classList.toggle("dense", items.length > 31);
+
+    var axis = $("axis");
+    axis.textContent = "";
+    /* A label every so often, so they never collide. */
+    var every = Math.max(1, Math.ceil(items.length / 8));
+    items.forEach(function (x, i) {
+      axis.appendChild(el("span", null, i % every === 0 ? labelOf(x) : ""));
+    });
+  }
+
+  function drawDays() {
+    $("chartHead").textContent = "Visits per day";
+    $("chartHint").textContent = "Click a day to open it, or drag across days for a range";
+    drawBars((latest.daily || []).map(function (x) {
+      return { n: x.visits, date: x.date, views: x.views, leads: x.leads };
+    }), function (x) { return short(x.date); }, function (x) {
+      return weekday(x.date, true) + ", " + short(x.date) + ": " + num(x.n) + " visits, "
+        + num(x.views) + " page views" + (x.leads ? ", " + num(x.leads) + " offer requests" : "");
+    });
+    $("chart").classList.add("pickable");
+  }
+
+  /* One day: visits by the hour they started, from the visit log. */
+  function drawHours() {
+    var hours = [];
+    for (var h = 0; h < 24; h++) hours.push({ n: 0, h: h });
+    (latest.visits || []).forEach(function (v) {
+      var m = /^(\d+):\d+\s*(AM|PM)$/i.exec(v.time || "");
+      if (m) hours[Number(m[1]) % 12 + (/pm/i.test(m[2]) ? 12 : 0)].n++;
+    });
+    function hourName(h) { return (h % 12 || 12) + (h < 12 ? "am" : "pm"); }
+    $("chartHead").textContent = "Visits by hour (Eastern)";
+    $("chartHint").textContent = latest.visits && latest.visits.length ? ""
+      : "Hour by hour comes from the visit log, which has nothing for this day.";
+    drawBars(hours, function (x) { return hourName(x.h); },
+      function (x) { return hourName(x.h) + "–" + hourName((x.h + 1) % 24) + ": " + num(x.n) + " visits"; });
+    $("chart").classList.remove("pickable");
+  }
+
+  /* Pointer events cover mouse, pen and touch alike. A press and release on
+     the same bar is a click; anything wider is a range. */
+  (function () {
+    var chart = $("chart");
+    var anchor = -1, over = -1;
+    function indexAt(x) {
+      var cols = chart.children;
+      if (!cols.length) return -1;
+      var box = chart.getBoundingClientRect();
+      var i = Math.floor(((x - box.left) / box.width) * cols.length);
+      return Math.max(0, Math.min(cols.length - 1, i));
+    }
+    function mark() {
+      var lo = Math.min(anchor, over), hi = Math.max(anchor, over);
+      Array.prototype.forEach.call(chart.children, function (c, i) {
+        c.classList.toggle("sel", anchor >= 0 && i >= lo && i <= hi);
       });
     }
-    [["Source", "sources"], ["Page", "pages"], ["Region", "regions"],
-     ["City", "cities"], ["Country", "countries"], ["Device", "devices"],
-     ["Campaign", "campaigns"], ["Bot reason", "botReasons"],
-     ["Bot city", "botCities"], ["Bot country", "botCountries"]].forEach(function (pair) {
-      var rows = latest[pair[1]] || [];
-      if (!rows.length) return;
-      lines.push("");
-      lines.push([pair[0], "Count"].join(","));
-      rows.forEach(function (r) {
-        lines.push(['"' + String(r.name).replace(/"/g, '""') + '"', r.count].join(","));
-      });
+    function reset() { anchor = over = -1; mark(); }
+    chart.addEventListener("pointerdown", function (e) {
+      if (!chart.classList.contains("pickable") || e.button > 0) return;
+      anchor = over = indexAt(e.clientX);
+      try { chart.setPointerCapture(e.pointerId); } catch (x) {}
+      mark();
     });
+    chart.addEventListener("pointermove", function (e) {
+      if (anchor < 0) return;
+      over = indexAt(e.clientX);
+      mark();
+    });
+    chart.addEventListener("pointerup", function () {
+      if (anchor < 0) return;
+      var days = latest.daily || [];
+      var a = days[Math.min(anchor, over)], b = days[Math.max(anchor, over)];
+      reset();
+      if (a && b) go({ from: a.date, to: b.date });
+    });
+    chart.addEventListener("pointercancel", reset);
+  })();
 
-    var blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  /* ---- the visit log */
+
+  function matches(v) {
+    if (pick) {
+      if (pick.kind === "city" && place(v) !== pick.value) return false;
+      if (pick.kind === "state" && !(v.country === "US" && v.region === pick.value)) return false;
+      if (pick.kind === "country" && v.country !== pick.value) return false;
+      if (pick.kind === "source" && v.source !== pick.value) return false;
+      if (pick.kind === "page" && v.pages.indexOf(pick.value) === -1) return false;
+      if (pick.kind === "device" && v.device !== pick.value) return false;
+    }
+    var q = filterInput.value.trim().toLowerCase();
+    if (!q) return true;
+    var hay = [place(v), STATES[v.region] || "", v.source, v.campaign, v.device, v.form,
+               v.pages.join(" ")].join(" ").toLowerCase();
+    return q.split(/\s+/).every(function (w) { return hay.indexOf(w) !== -1; });
+  }
+
+  function visible() { return (latest.visits || []).filter(matches); }
+
+  function drawVisits() {
+    var box = $("visitLog");
+    box.textContent = "";
+    var all = latest.visits || [];
+    var rows = visible();
+    var oneDay = range.from === range.to;
+    var filtered = rows.length !== all.length;
+    $("visitsHead").textContent = "Visits"
+      + (all.length ? " (" + num(rows.length) + (filtered ? " of " + num(all.length) : "") + ")" : "");
+    $("csvBtn").disabled = !rows.length;
+
+    var chip = $("filterChip");
+    chip.textContent = "";
+    chip.hidden = !pick;
+    if (pick) {
+      chip.appendChild(el("span", null, pick.label));
+      var x = el("button", null, "×");
+      x.type = "button";
+      x.setAttribute("aria-label", "Clear this filter");
+      x.addEventListener("click", function () { pick = null; shown = PAGE; drawVisits(); });
+      chip.appendChild(x);
+    }
+
+    if (!rows.length) {
+      var why;
+      if (all.length) why = "No visits match the filter.";
+      else if (!latest.logStart || range.to < latest.logStart) {
+        why = latest.logStart
+          ? "Visit-by-visit records begin on " + withYear(latest.logStart)
+            + ". For earlier days the totals, chart and lists still apply."
+          : "No visits have been recorded one by one yet.";
+      } else why = "Nobody visited in this period.";
+      box.appendChild(el("p", "st-empty", why));
+      return;
+    }
+    if (latest.logStart && range.from < latest.logStart) {
+      box.appendChild(el("p", "st-empty st-empty-s", "Visit-by-visit records begin on "
+        + withYear(latest.logStart) + "; days before that appear in the totals only."));
+    }
+
+    var wrap = el("div", "st-tbl-wrap");
+    var t = el("table", "st-tbl");
+    var head = el("tr");
+    [oneDay ? "Time" : "When", "Location", "Came from", "Pages", "Device"]
+      .forEach(function (h) { head.appendChild(el("th", null, h)); });
+    var thead = el("thead");
+    thead.appendChild(head);
+    t.appendChild(thead);
+    var tb = el("tbody");
+    rows.slice(0, shown).forEach(function (v) {
+      var tr = el("tr");
+      var when = el("td", "c-when");
+      if (oneDay) {
+        when.textContent = v.time;
+      } else {
+        when.appendChild(el("span", null, weekday(v.date) + " " + short(v.date)));
+        when.appendChild(el("small", null, v.time));
+      }
+      tr.appendChild(when);
+      tr.appendChild(el("td", "c-loc", place(v) || "Unknown"));
+      tr.appendChild(el("td", null, (v.source || "—") + (v.campaign ? " · " + v.campaign : "")));
+
+      var pg = el("td", "c-pages");
+      var top = el("div");
+      top.appendChild(document.createTextNode(v.pages.length + (v.pages.length === 1 ? " page" : " pages")));
+      if (v.form) {
+        top.appendChild(el("span", "st-tag" + (v.form === "Sent" ? " st-tag-lead" : ""),
+          v.form === "Sent" ? "Sent an offer request" : "Form: " + v.form.toLowerCase()));
+      }
+      pg.appendChild(top);
+      pg.appendChild(el("small", null, v.pages.join(" → ")));
+      tr.appendChild(pg);
+      tr.appendChild(el("td", "c-dev", v.device || "—"));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    wrap.appendChild(t);
+    box.appendChild(wrap);
+
+    if (rows.length > shown) {
+      var more = el("button", "backlink st-more", "Show more (" + num(rows.length - shown) + " not shown)");
+      more.type = "button";
+      more.addEventListener("click", function () { shown += 500; drawVisits(); });
+      box.appendChild(more);
+    }
+    if (latest.visitCount > all.length) {
+      box.appendChild(el("p", "st-empty st-empty-s", "Only the newest " + num(all.length) + " of "
+        + num(latest.visitCount) + " visits fit in one view. Pick a shorter period for the rest."));
+    }
+  }
+
+  /* ---- the lists above the log. Clicking a row filters the log by it. */
+
+  function breakdown(title, one, rows, kind, nameOf, valueOf) {
+    var card = el("div", "st-card st-list");
+    card.appendChild(el("h3", null, title));
+    if (!rows || !rows.length) {
+      card.appendChild(el("p", "st-empty", "Nothing in this period."));
+      return card;
+    }
+    var top = rows.reduce(function (m, r) { return Math.max(m, r.count); }, 0) || 1;
+    var list = el("ol");
+    rows.slice(0, 10).forEach(function (r) {
+      var li = el("li");
+      var b = el("button");
+      b.type = "button";
+      var name = nameOf ? nameOf(r.name) : r.name;
+      b.title = "Show only these visits";
+      b.appendChild(el("span", "n", name));
+      b.appendChild(el("span", "c", num(r.count)));
+      var fill = el("i");
+      fill.style.width = Math.max(2, Math.round((r.count / top) * 100)) + "%";
+      b.appendChild(fill);
+      b.addEventListener("click", function () {
+        pick = { kind: kind, value: valueOf ? valueOf(r.name) : r.name, label: one + ": " + name };
+        shown = PAGE;
+        drawVisits();
+        $("visitsHead").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      li.appendChild(b);
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+    return card;
+  }
+
+  function drawBreakdowns() {
+    var d = latest;
+    var grid = $("breakdowns");
+    grid.textContent = "";
+    grid.appendChild(breakdown("Towns", "Town", d.cities, "city", cityName, cityName));
+    grid.appendChild(breakdown("States", "State",
+      (d.regions || []).filter(function (r) { return /^US-/.test(r.name); }),
+      "state", stateName, function (n) { return n.slice(3); }));
+    grid.appendChild(breakdown("Where they came from", "Came from", d.sources, "source"));
+    grid.appendChild(breakdown("Pages read", "Page", d.pages, "page"));
+    grid.appendChild(breakdown("Devices", "Device", d.devices, "device"));
+    grid.appendChild(breakdown("Countries", "Country", d.countries, "country"));
+  }
+
+  function drawFoot() {
+    var d = latest;
+    var bots = (d.bots && d.bots.visits) || 0;
+    var me = (d.owner && d.owner.hidden && d.owner.hidden.visits) || 0;
+    var towns = (d.owner && d.owner.towns) || [];
+    $("excluded").textContent = "Left out of everything above: " + num(bots)
+      + (bots === 1 ? " bot visit" : " bot visits") + " and " + num(me)
+      + (me === 1 ? " visit of your own." : " visits of your own.");
+    $("ownerNote").textContent = "This browser is marked as yours, so your own reading of the "
+      + "site is never counted. Open this page once on your phone to mark it too."
+      + (towns.length ? " Visits from " + towns.join(" or ") + " count as yours on any device." : "");
+    $("dashFoot").textContent = "Times are Eastern. A visit is one browser tab's stay on the site. "
+      + "Location comes from the connection's network, so it is right to the town at best and "
+      + "wrong for anyone on a VPN. A visit counts as a bot when its browser, location or "
+      + "behaviour gives it away: known crawlers, scripted browsers, data-center towns such as "
+      + "Ashburn VA, and anyone who left in under a second without touching the page. Visitors "
+      + "who ask not to be tracked are not counted.";
+  }
+
+  /* ------------------------------------------------------------- exports */
+
+  function download(name, lines) {
+    /* The byte-order mark makes Excel read the file as UTF-8, so "–" and
+       "→" survive. */
+    var blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
     var a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "hometownland-traffic-" + latest.from
-      + (latest.from === latest.to ? "" : "-to-" + latest.to) + ".csv";
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
+  function cell(v) {
+    var s = v === undefined || v === null ? "" : String(v);
+    return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function stamp() {
+    return range.from === range.to ? range.from : range.from + "-to-" + range.to;
+  }
+
+  /* Every visit in the period that passes the filter, oldest first. */
+  function exportVisits() {
+    if (!latest) return;
+    var lines = [["Date", "Time (Eastern)", "Day", "Town", "State", "Country", "Came from",
+                  "Campaign", "Landing page", "Pages viewed", "Pages in order", "Device",
+                  "Offer form"].join(",")];
+    visible().slice().reverse().forEach(function (v) {
+      lines.push([v.date, v.time, weekday(v.date, true), v.city, v.region, v.country, v.source,
+                  v.campaign, v.pages[0], v.pages.length, v.pages.join(" > "), v.device,
+                  v.form].map(cell).join(","));
+    });
+    download("hometownland-visits-" + stamp() + ".csv", lines);
+  }
+
+  function exportDaily() {
+    if (!latest) return;
+    var lines = ["Date,Day,Visits,Page views,Offer requests"];
+    (latest.daily || []).forEach(function (d) {
+      lines.push([d.date, weekday(d.date, true), d.visits, d.views, d.leads].join(","));
+    });
+    download("hometownland-daily-" + stamp() + ".csv", lines);
+  }
+
+  /* -------------------------------------------------------------- wiring */
 
   gate.addEventListener("submit", function (e) {
     e.preventDefault();
     var k = keyInput.value.trim();
     if (!k) return;
-    remember(k);
+    put(KEY_STORE, k);
     gate.hidden = true;
     load();
   });
 
-  rangeSel.addEventListener("change", function () {
-    before = null;
-    if (rangeSel.value === "custom") { fromDate.focus(); return; }
-    var r = presetRange(rangeSel.value);
-    setRange(r[0], r[1]);
-    load();
+  chips.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    var p = b.getAttribute("data-p");
+    if (p === "custom") {
+      customForm.hidden = !customForm.hidden;
+      if (!customForm.hidden) fromDate.focus();
+      return;
+    }
+    go(PRESETS[p](today()));
   });
-  function datesChanged() {
-    if (!fromDate.value || !toDate.value) return;
-    before = null;
-    if (fromDate.value > toDate.value) setRange(toDate.value, fromDate.value);
-    rangeSel.value = "custom";
-    load();
-  }
-  fromDate.addEventListener("change", datesChanged);
-  toDate.addEventListener("change", datesChanged);
-  dayBackBtn.addEventListener("click", function () {
-    if (!before) return;
-    setRange(before[0], before[1]);
-    rangeSel.value = before[2];
-    before = null;
-    load();
+  customForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (fromDate.value && toDate.value) go({ from: fromDate.value, to: toDate.value });
   });
+  $("prevBtn").addEventListener("click", function () { step(-1); });
+  $("nextBtn").addEventListener("click", function () { step(1); });
+  $("backBtn").addEventListener("click", function () { history.back(); });
+  addEventListener("popstate", function () { show(fromHash()); });
 
-  /* Kept within what the server holds: today back 400 days. */
-  fromDate.max = toDate.max = todayET();
-  fromDate.min = toDate.min = addDays(todayET(), -399);
-  var start = presetRange(rangeSel.value);
-  setRange(start[0], start[1]);
-
-  mineToggle.checked = hideMine();
-  mineToggle.addEventListener("change", function () {
-    try { localStorage.setItem(MINE_STORE, mineToggle.checked ? "hide" : "show"); } catch (e) {}
-    load();
+  var typing;
+  filterInput.addEventListener("input", function () {
+    clearTimeout(typing);
+    typing = setTimeout(function () { shown = PAGE; if (latest) drawVisits(); }, 150);
   });
-  /* Bots' visit-by-visit lines are only fetched once they are asked for. */
-  botToggle.addEventListener("change", function () {
-    if (!latest) return;
-    if (botToggle.checked && !latest.botLog) return load();
-    render(latest);
-  });
-  document.getElementById("csvBtn").addEventListener("click", csv);
-  document.getElementById("forgetBtn").addEventListener("click", function () {
-    remember("");
+  $("csvBtn").addEventListener("click", exportVisits);
+  $("dailyCsvBtn").addEventListener("click", exportDaily);
+  $("forgetBtn").addEventListener("click", function () {
+    put(KEY_STORE, "");
     say("");
     askForKey(false);
   });
 
-  /* ?key=… works once, for the first visit from a saved link, and is taken out
-     of the address bar immediately so it is not left in history or copied on. */
+  /* ?key=… works once, for the first visit from a saved link, and is taken
+     out of the address bar at once so it is not left in history or copied on. */
   var fromUrl = new URLSearchParams(location.search).get("key");
-  if (fromUrl) {
-    remember(fromUrl.trim());
-    history.replaceState(null, "", location.pathname);
-  }
-
-  load();
+  if (fromUrl) put(KEY_STORE, fromUrl.trim());
+  var start = fromHash();
+  history.replaceState({ depth: 0, back: "" }, "", location.pathname + hashOf(start));
+  show(start);
 })();

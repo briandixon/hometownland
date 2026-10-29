@@ -105,31 +105,37 @@ while integrations are half-configured.
 
 ## Traffic
 
-`/stats` is a private dashboard: visits, page views, offer requests, and where
-visitors came from (referrer or campaign, country, state, city, device), for any
-date range up to 400 days, with a click-through to any single day and a
-visit-by-visit log that the CSV export includes. It is noindex, `Disallow`ed,
-unlinked, and gated on the `TRAFFIC_KEY` env var.
+`/stats` is a private dashboard: pick any period (quick chips, ‹ › to step,
+custom dates, or click/drag across the day chart), see the totals, the towns,
+states, sources and pages, and every visit one by one with its time and
+location. The visit list exports to CSV. The period lives in the URL hash, so
+the browser's Back button walks back through what was looked at. It is
+noindex, `Disallow`ed, unlinked, and gated on the `TRAFFIC_KEY` env var.
 
 Every page beacons to `POST /api/track`, which increments fields in a per-day
 Redis hash and appends a line to a per-day visit log (`htl:l:<day>`, bots in
 `htl:lb:<day>`, each capped per day). Lines are joined into visits by a random
 id the tab keeps in sessionStorage — no IP, no cookie, nothing that outlives
 the tab. The log began on the day it shipped (`htl:logstart`); earlier days
-have totals only. The privacy page describes the log; keep it in step. Geography
-comes from Vercel's `x-vercel-ip-*` headers. It uses the same Redis the Call
-Desk relay uses and accepts the same variable names, so a project set up for
-the desk needs nothing added. No store means nothing is recorded and the
+have totals only. The privacy page describes the log; keep it in step.
+Geography comes from Vercel's `x-vercel-ip-*` headers. It uses the same Redis
+the Call Desk relay uses and accepts the same variable names, so a project set
+up for the desk needs nothing added. No store means nothing is recorded and the
 dashboard says so rather than showing zeros.
 
-Bots are scored by the rules in `src/api/_bot-rules.js` and counted apart
-under `b:` fields; `/stats` hides them unless "Show bots" is ticked. A visit
-from a data-center town (Ashburn VA, Council Bluffs IA, …) is a bot by
-definition, even if it scrolls — that is deliberate.
+**Bots and the owner never appear on `/stats`.** Bots are scored by the rules
+in `src/api/_bot-rules.js` and counted apart under `b:` fields. A visit from a
+data-center town (Ashburn VA, Council Bluffs IA, …) is a bot by definition,
+even if it scrolls — that is deliberate. The owner is recognised two ways and
+counted apart under `m:`: by town (`OWNER_TOWNS` in `src/api/track.js`,
+overridable with `TRAFFIC_OWNER_TOWNS`), and by a `htl.owner` mark that `/stats`
+leaves in localStorage once its key is accepted, which `site.js` sends as `o:1`
+— so the owner's phone counts as the owner's anywhere, once `/stats` has been
+opened on it. The dashboard only reports how many of each were left out.
 
-The owner's own visits — anything from Walpole MA or Norfolk MA (`OWNER_TOWNS` in
-`src/api/track.js`, overridable with `TRAFFIC_OWNER_TOWNS`) — are counted apart
-under `m:` fields, and `/stats` hides them unless "Hide my visits" is unticked.
+Every asset a page loads carries a `?v=` content hash (`hashed()` in
+`build.py`), because `/assets/` is cached for a year as immutable; without it a
+browser keeps running the old script against the new page.
 
 Deliberately not counted, so do not treat any of these as a bug:
 browsers sending Do Not Track, the `/stats` page itself, and every host that is

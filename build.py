@@ -41,6 +41,8 @@ STATES = [
     "Washington", "West Virginia", "Wisconsin", "Wyoming",
 ]
 
+# site.css, site.js and any page script carry a content hash: /assets/ is cached
+# for a year as immutable, so an unversioned URL keeps serving last month's file.
 SHELL = """<!doctype html>
 <html lang="en">
 <head>
@@ -61,7 +63,7 @@ SHELL = """<!doctype html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/css/site.css">
+<link rel="stylesheet" href="{site_css}">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -70,7 +72,7 @@ SHELL = """<!doctype html>
 {content}
 </main>
 {footer}
-<script src="/assets/js/site.js" defer></script>{scripts}
+<script src="{site_js}" defer></script>{scripts}
 </body>
 </html>
 """
@@ -171,7 +173,7 @@ def build():
         robots = meta.get("robots", "")
         robots_tag = f'\n<meta name="robots" content="{robots}">' if robots else ""
         scripts = "".join(
-            f'\n<script src="/assets/js/{name.strip()}.js" defer></script>'
+            f'\n<script src="{hashed(f"/assets/js/{name.strip()}.js")}" defer></script>'
             for name in meta.get("script", "").split(",") if name.strip())
 
         if meta.get("layout", "").lower() == "app":
@@ -195,7 +197,9 @@ def build():
         OUT.joinpath(f"{slug}.html").write_text(
             SHELL.format(title=full_title, desc=meta.get("desc", ""), canonical=canonical,
                          base=BASE_URL, header=hdr, footer=footer, content=content,
-                         robots=robots_tag, scripts=scripts),
+                         robots=robots_tag, scripts=scripts,
+                         site_css=hashed("/assets/css/site.css"),
+                         site_js=hashed("/assets/js/site.js")),
             encoding="utf-8")
         slugs.append(slug)
         if slug != "thank-you" and "noindex" not in robots:

@@ -72,6 +72,11 @@
   }
   saveMark(false);
 
+  /* The owner's own browser: /stats leaves this mark once its key is accepted,
+     so the owner's reading is set aside wherever the connection comes from. */
+  var owner = false;
+  try { owner = localStorage.getItem("htl.owner") === "1"; } catch (e) {}
+
   var q = new URLSearchParams(location.search);
   var opened = Date.now();
   var sent = false;
@@ -84,6 +89,7 @@
     post({
       v: 2,
       id: visitId,
+      o: owner ? 1 : 0,
       p: location.pathname,
       r: document.referrer,
       s: q.get("utm_source") || q.get("ref") || "",
@@ -115,7 +121,7 @@
   /* Named events: the offer form's progress and a submitted request, so the
      dashboard can show where people drop out of the form. */
   window.htlEvent = function (name, extra) {
-    var payload = { e: name, id: visitId };
+    var payload = { e: name, id: visitId, o: owner ? 1 : 0 };
     if (extra) for (var k in extra) payload[k] = extra[k];
     post(payload);
   };
